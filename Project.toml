@@ -1,0 +1,6 @@
+name="Opf4Borders"
+[deps]
+JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+JuMP = "4076af6c-e467-56ae-b986-b466b2749572"
+PrettyPrint = "8162dcfd-2161-5ef2-ae6c-7681170c5f98"
+Xpress = "9e70acf3-d6c9-5be6-b5bd-4e2c73e3e054"
