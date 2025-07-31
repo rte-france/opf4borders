@@ -28,7 +28,7 @@ _ELEMVARS="elemVars"
 _PERMANENT_LIMIT = "permanent_limit"
 _MIN = "min"
 _MAX = "max"
-_ELEMP0 = "elemP0"
+_ELEMP0 = "ref_setpoint"
 _HVDC = "hvdc"
 _PST = "pst"
 _REFERENCE_CURRENT = "referenceCurrent"
@@ -44,6 +44,7 @@ struct PST
     name::String;
     alphaMin::Float64;
     alphaMax::Float64;
+    alpha0::Float64;
 end
 
 struct QUAD
@@ -78,19 +79,19 @@ function read_json(file_name::String)
         if hvdcOrPst == _HVDC
                 network._hvdcs[name] = HVDC(name, v2[_MIN], v2[_MAX], v2[_ELEMP0])
         elseif hvdcOrPst == _PST
-                network._psts[name] = HVDC(name, v2[_MIN], v2[_MAX], v2[_ELEMP0])
+                network._psts[name] = PST(name, v2[_MIN], v2[_MAX], v2[_ELEMP0])
         end
     end
     # (sensi, branch, INC, element) ==> value
     for (branchOrHvdc, v1) in json[_SENSI], (branch, v2) in v1, (INC,v3) in v2, (element,v4) in v3 
-        network._sensi[branch,  INC == _BASECASE ? _PERMANENT_LIMIT : INC, element] = v4
+        network._sensi[branch,  INC, element] = v4
     end
     return network
 end
 
 
-function create_model(quiet::Bool, network::NETWORK, set_of_hvdc::Base.KeySet, set_of_quad_inc::Set,
-                      dict_of_quad_inc_sensi::Dict)
+function create_model(quiet::Bool, network::NETWORK, set_of_hvdc::Base.KeySet, set_of_pst::Set,
+                      set_of_quad_inc::Set, dict_of_quad_inc_sensi::Dict)
     model = Model( Xpress.Optimizer)
     MOI.set(model, MOI.Silent(), quiet)
 
@@ -108,14 +109,14 @@ function create_model(quiet::Bool, network::NETWORK, set_of_hvdc::Base.KeySet, s
     begin
         Current_Max_Pos[(quad, inc) in  set_of_quad_inc], 
         network._sensi[quad, inc, _REFERENCE_CURRENT] +
-            sum(val* delta_P0[hvdc] for (hvdc, val) in dict_of_quad_inc_sensi[quad, inc]) <=
+            sum(val * delta_P0[hvdc] for (hvdc, val) in dict_of_quad_inc_sensi[quad, inc]) <=
             + network._quads[quad].limits[_PERMANENT_LIMIT]
     end
     )
 
     @constraints(model, 
     begin
-        Current_Max_PNeg[(quad, inc) in  set_of_quad_inc], 
+        Current_Max_Neg[(quad, inc) in  set_of_quad_inc], 
         network._sensi[quad, inc, _REFERENCE_CURRENT] +
             sum(val* delta_P0[hvdc] for (hvdc, val) in dict_of_quad_inc_sensi[quad, inc]) >=
             -network._quads[quad].limits[_PERMANENT_LIMIT]
@@ -125,6 +126,10 @@ function create_model(quiet::Bool, network::NETWORK, set_of_hvdc::Base.KeySet, s
 end
 
 function launch_optimization(file_name::String)
+    launch_optimization(file_name, "results.json")    
+end
+
+function launch_optimization(file_name::String, results_file_name::String)
     network = read_json(file_name)
     set_of_hvdc = keys(network._hvdcs);
     set_of_quad_inc = Set();
@@ -136,17 +141,21 @@ function launch_optimization(file_name::String)
             dict_of_quad_inc_sensi[quad, inc] = Dict()
         end
     end
+    no_limits_quad = Set()
     for ((quad, inc, element), val) in network._sensi
         if haskey(dict_of_quad_inc_sensi, (quad, inc)) 
             if element != _REFERENCE_CURRENT
                 dict_of_quad_inc_sensi[quad, inc][element] = val
             end
         else
-            println("no limits for line $quad but sensi provided")
+            push!(no_limits_quad, quad)
         end
     end
+    for quad in no_limits_quad
+        println("no limits for line $quad but sensi provided")
+    end
 
-    model, delta_P0 = create_model(true, network, set_of_hvdc, set_of_quad_inc, dict_of_quad_inc_sensi)
+    model, delta_P0 = create_model(true, network, set_of_hvdc, Set(), set_of_quad_inc, dict_of_quad_inc_sensi)
 
     set_objective(model, MIN_SENSE, sum(delta_P0[hvdc] for hvdc in set_of_hvdc))
     optimize!(model)
@@ -171,6 +180,18 @@ function launch_optimization(file_name::String)
 
     for hvdc in set_of_hvdc
         println( value(delta_P0[hvdc] + network._hvdcs[hvdc].elemP0 - middle_P0_value[hvdc]) )
+    end
+
+    if isfile(results_file_name)
+        all_results = JSON.parsefile(results_file_name)
+    else
+        all_results = Dict()
+    end
+    all_results[file_name] = Dict("Min safe points" => min_P0_value,
+                                  "Max safe points" => max_P0_value,
+                                  "Safest points" => middle_P0_value)
+    open(results_file_name, "w") do file
+        JSON.print(file, all_results, 2)
     end
 end
 
