@@ -90,7 +90,7 @@ function read_json(file_name::String)
 end
 
 
-function create_model(quiet::Bool, network::NETWORK, set_of_hvdc::Base.KeySet, set_of_pst::Set,
+function create_model(quiet::Bool, network::NETWORK, set_of_hvdc::Set, set_of_pst::Set,
                       set_of_quad_inc::Set, dict_of_quad_inc_sensi::Dict)
     model = Model( Xpress.Optimizer)
     MOI.set(model, MOI.Silent(), quiet)
@@ -102,27 +102,40 @@ function create_model(quiet::Bool, network::NETWORK, set_of_hvdc::Base.KeySet, s
             network._hvdcs[hvdc].pMax - network._hvdcs[hvdc].elemP0
     end);
 
+    @variables(model,
+    begin
+        network._psts[pst].alphaMin -  network._psts[pst].alpha0 <=
+            delta_alpha[pst in set_of_pst] <=
+            network._psts[pst].alphaMax - network._psts[pst].alpha0
+    end);
+
+    @variable(model, minimum_margin)
+
     @objective(model, MIN_SENSE, sum(delta_P0[hvdc] for hvdc in set_of_hvdc))
 
 
     @constraints(model,
     begin
-        Current_Max_Pos[(quad, inc) in  set_of_quad_inc], 
-        network._sensi[quad, inc, _REFERENCE_CURRENT] +
-            sum(val * delta_P0[hvdc] for (hvdc, val) in dict_of_quad_inc_sensi[quad, inc]) <=
-            + network._quads[quad].limits[_PERMANENT_LIMIT]
+        Current_Max_Pos[(quad, inc) in set_of_quad_inc],
+        minimum_margin <= network._quads[quad].limits[_PERMANENT_LIMIT] -
+            (network._sensi[quad, inc, _REFERENCE_CURRENT] +
+            sum(val * delta_alpha[pst] for (pst, val) in dict_of_quad_inc_sensi[quad, inc] if pst in set_of_pst) +
+            sum(val * delta_P0[hvdc] for (hvdc, val) in dict_of_quad_inc_sensi[quad, inc] if hvdc in set_of_hvdc))
     end
     )
 
     @constraints(model, 
     begin
         Current_Max_Neg[(quad, inc) in  set_of_quad_inc], 
-        network._sensi[quad, inc, _REFERENCE_CURRENT] +
-            sum(val* delta_P0[hvdc] for (hvdc, val) in dict_of_quad_inc_sensi[quad, inc]) >=
-            -network._quads[quad].limits[_PERMANENT_LIMIT]
+        minimum_margin <= network._quads[quad].limits[_PERMANENT_LIMIT] +
+            network._sensi[quad, inc, _REFERENCE_CURRENT] +
+            sum(val * delta_alpha[pst] for (pst, val) in dict_of_quad_inc_sensi[quad, inc] if pst in set_of_pst) +
+            sum(val * delta_P0[hvdc] for (hvdc, val) in dict_of_quad_inc_sensi[quad, inc] if hvdc in set_of_hvdc)
     end
     )
-    return model, delta_P0
+
+    @constraint(model, minimum_margin >= 0)
+    return model, delta_P0, delta_alpha, minimum_margin
 end
 
 function launch_optimization(file_name::String)
@@ -131,7 +144,8 @@ end
 
 function launch_optimization(file_name::String, results_file_name::String)
     network = read_json(file_name)
-    set_of_hvdc = keys(network._hvdcs);
+    set_of_hvdc = Set(keys(network._hvdcs));
+    set_of_pst = Set(keys(network._psts));
     set_of_quad_inc = Set();
     dict_of_quad_inc_sensi = Dict()
 
@@ -155,31 +169,38 @@ function launch_optimization(file_name::String, results_file_name::String)
         println("no limits for line $quad but sensi provided")
     end
 
-    model, delta_P0 = create_model(true, network, set_of_hvdc, Set(), set_of_quad_inc, dict_of_quad_inc_sensi)
+    model, delta_P0, delta_alpha, minimum_margin = create_model(true, network, set_of_hvdc, set_of_pst, 
+                                                                set_of_quad_inc, dict_of_quad_inc_sensi)
 
     set_objective(model, MIN_SENSE, sum(delta_P0[hvdc] for hvdc in set_of_hvdc))
     optimize!(model)
     min_value = objective_value(model)
     min_P0_value = Dict(hvdc => network._hvdcs[hvdc].elemP0+value(delta_P0[hvdc]) for hvdc in set_of_hvdc)
+    min_alpha0_value = Dict(pst => network._psts[pst].alpha0+value(delta_alpha[pst]) for pst in set_of_pst)
 
     set_objective(model, MAX_SENSE, sum(delta_P0[hvdc] for hvdc in set_of_hvdc))
     optimize!(model)
     max_value = objective_value(model)
     max_P0_value = Dict(hvdc => network._hvdcs[hvdc].elemP0+value(delta_P0[hvdc]) for hvdc in set_of_hvdc)
+    max_alpha0_value = Dict(pst => network._psts[pst].alpha0+value(delta_alpha[pst]) for pst in set_of_pst)
 
     middle_P0_value = Dict(hvdc => 0.5*(min_P0_value[hvdc]+max_P0_value[hvdc]) for hvdc in set_of_hvdc)
-    set_objective(model, MIN_SENSE, sum((delta_P0[hvdc] + network._hvdcs[hvdc].elemP0 - middle_P0_value[hvdc])^2 for hvdc in set_of_hvdc))
+    set_objective(model, MAX_SENSE, minimum_margin)
     optimize!(model)
 
     marging_P0_value = Dict(hvdc =>network._hvdcs[hvdc].elemP0+value(delta_P0[hvdc]) for hvdc in set_of_hvdc)
+    marging_alpha0_value = Dict(pst => network._psts[pst].alpha0+value(delta_alpha[pst]) for pst in set_of_pst)
 
-    println("The min safe setpoints are : ", min_P0_value)
-    println("The max safe setpoints are : ", max_P0_value)
-    println("The safest setpoints are : ", middle_P0_value)
-    println("The ", marging_P0_value)
+    println("The min safe HVDC setpoints are : ", min_P0_value)
+    println("Which corresponds to PST setpoints : ", min_alpha0_value)
+    println("\nThe max safe HVDC setpoints are : ", max_P0_value)
+    println("Which corresponds to PST setpoints : ", max_alpha0_value)
+    println("\nThe HVDC setpoints maximizing the margins are : ", marging_P0_value)
+    println("Which corresponds to PST setpoints : ", marging_alpha0_value)
+    println("And the minimum_margin is (if negative this is an issue) ", value(minimum_margin))
 
     for hvdc in set_of_hvdc
-        println( value(delta_P0[hvdc] + network._hvdcs[hvdc].elemP0 - middle_P0_value[hvdc]) )
+        println(value(delta_P0[hvdc] + network._hvdcs[hvdc].elemP0 - middle_P0_value[hvdc]))
     end
 
     if isfile(results_file_name)
