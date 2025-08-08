@@ -24,8 +24,10 @@ and the optimisation variable will be $\Delta x^y$.
 
 ## "Hybrid" control of the HVDC
 
-The HVDCs are controlled using an hybrid mode, the setpoint $P^h$ is defined as 
-$$ P^h = P^{h,c} + P^{h,v} = P^{h,c} + k^h\Delta\theta^h$$ 
+The HVDCs are controlled using an hybrid mode, the setpoint $P^h$ is defined as
+
+$$P^h = P^{h,c} + P^{h,v} = P^{h,c} + k^h\Delta\theta^h$$ 
+
 where $P^{h,c}$ is the HVDC constant setpoint (which will be optimized), $k^h$ is a (predefined gain) and $\Delta\theta^h$ is the difference between electrical angles on both sides of the HVDC.
 
 This control is implemented by modelising the HVDC as two (three) distinct element:
@@ -40,18 +42,28 @@ The total setpoint of the HVDC is then given by:
 
 $$P^h = P^h_0 + \Delta P^h $$
 
-$$P^h = \underbrace{P_0^h + k^h\Delta\theta^h_0}_\text{Setpoint of the initial state} + \underbrace{\Delta P^{h,c}}_\text{Optimization variable} +  \sum_{h'\in\mathcal{H}} \left.\frac{\partial P^{h^\mathrm{eq}}}{\partial P^{h'}}\right|_0\Delta P^{h',c} + \sum_{p\in\mathcal{P}} \left.\frac{\partial P^{h^\mathrm{eq}}}{\partial \alpha^p}\right|_0\Delta\alpha^p$$
+$$P^h = \underbrace{P_0^h + k^h\Delta\theta^h_0}_\text{Setpoint of the initial state}$$
+
+$$+\underbrace{\Delta P^{h,c}}_\text{Optimization variable} $$ 
+
+$$+ \sum_{h'\in\mathcal{H}} \left.\frac{\partial P^{h^\mathrm{eq}}}{\partial P^{h'}}\right|_0\Delta P^{h',c} $$
+
+$$+ \sum_{p\in\mathcal{P}} \left.\frac{\partial P^{h^\mathrm{eq}}}{\partial \alpha^p}\right|_0\Delta\alpha^p$$
 
 **As of today, the equivalent AC line is not in the model and the HVDC is optimized with a fully controllable setpoint.**
 
 ## Flow on a AC-line
 
 The flow on an AC-line $\ell\in\mathcal{L}^\mathrm{AC}$ is defined affinely as a function of the setpoints:
-$$I^\ell = I_0^\ell + \sum_{h\in\mathcal{H}} \left.\frac{\partial I^\ell}{\partial P^{h}}\right|_0\Delta P^{h,c} + \sum_{p\in\mathcal{P}} \left.\frac{\partial I^\ell}{\partial \alpha^p}\right|_0\Delta\alpha^p$$
+
+$$I^\ell = I_0^\ell + \sum_{h\in\mathcal{H}} \left.\frac{\partial I^\ell}{\partial P^{h}}\right|_0\Delta P^{h,c}$$
+
+$$+ \sum_{p\in\mathcal{P}} \left.\frac{\partial I^\ell}{\partial \alpha^p}\right|_0\Delta\alpha^p$$
 
 To be more precise, the sensitivity of an HVDC on a line corresponds to the 1. of the modelization of the HVDC, which means that it simply the sum of the sensitivity at the connecting nodes of the HVDC on the given line:
 
-$$ \frac{\partial I^\ell}{\partial P^{h}} = \frac{\partial I^\ell}{\partial P^\mathrm{end}} - \frac{\partial I^\ell}{\partial P^\mathrm{or}}$$
+$$\frac{\partial I^\ell}{\partial P^{h}} = \frac{\partial I^\ell}{\partial P^\mathrm{end}} - \frac{\partial I^\ell}{\partial P^\mathrm{or}}$$
+
 where $P^\mathrm{end}, P^\mathrm{or}$ is the power injection at the (respectively) $\mathrm{end}$ and $\mathrm{origin}$ nodes of the HVDC.
 
 ## Line limits
