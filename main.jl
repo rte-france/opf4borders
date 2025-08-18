@@ -56,13 +56,13 @@ end
 struct NETWORK
     _hvdcs::Dict{String, HVDC};
     _psts::Dict{String, PST};
-    _quads::Dict{String, QUAD};  
+    _quads::Dict{String, QUAD};
 
-    _sensi::Dict{Tuple{String, String, String}, Float64};  
+    _sensi::Dict{Tuple{String, String, String}, Float64};
 
     NETWORK() = new(Dict{String, HVDC}(), Dict{String, PST}(), Dict{String, QUAD}(),
                     Dict{Tuple{String, String, String}, Float64}());
-    
+
 end
 
 function read_json(file_name::String)
@@ -83,7 +83,7 @@ function read_json(file_name::String)
         end
     end
     # (sensi, branch, INC, element) ==> value
-    for (branchOrHvdc, v1) in json[_SENSI], (branch, v2) in v1, (INC,v3) in v2, (element,v4) in v3 
+    for (branchOrHvdc, v1) in json[_SENSI], (branch, v2) in v1, (INC,v3) in v2, (element,v4) in v3
         network._sensi[branch,  INC, element] = v4
     end
     return network
@@ -92,7 +92,7 @@ end
 
 function create_model(quiet::Bool, network::NETWORK, set_of_hvdc::Set, set_of_pst::Set,
                       set_of_quad_inc::Set, dict_of_quad_inc_sensi::Dict)
-    model = Model( Xpress.Optimizer)
+    model = Model(Xpress.Optimizer)
     MOI.set(model, MOI.Silent(), quiet)
 
     @variables(model,
@@ -124,9 +124,9 @@ function create_model(quiet::Bool, network::NETWORK, set_of_hvdc::Set, set_of_ps
     end
     )
 
-    @constraints(model, 
+    @constraints(model,
     begin
-        Current_Max_Neg[(quad, inc) in  set_of_quad_inc], 
+        Current_Max_Neg[(quad, inc) in  set_of_quad_inc],
         minimum_margin <= network._quads[quad].limits[_PERMANENT_LIMIT] +
             network._sensi[quad, inc, _REFERENCE_CURRENT] +
             sum(val * delta_alpha[pst] for (pst, val) in dict_of_quad_inc_sensi[quad, inc] if pst in set_of_pst) +
@@ -139,7 +139,7 @@ function create_model(quiet::Bool, network::NETWORK, set_of_hvdc::Set, set_of_ps
 end
 
 function launch_optimization(file_name::String)
-    launch_optimization(file_name, "results.json")    
+    launch_optimization(file_name, "results.json")
 end
 
 function launch_optimization(file_name::String, results_file_name::String)
@@ -157,7 +157,7 @@ function launch_optimization(file_name::String, results_file_name::String)
     end
     no_limits_quad = Set()
     for ((quad, inc, element), val) in network._sensi
-        if haskey(dict_of_quad_inc_sensi, (quad, inc)) 
+        if haskey(dict_of_quad_inc_sensi, (quad, inc))
             if element != _REFERENCE_CURRENT
                 dict_of_quad_inc_sensi[quad, inc][element] = val
             end
@@ -169,7 +169,7 @@ function launch_optimization(file_name::String, results_file_name::String)
         println("no limits for line $quad but sensi provided")
     end
 
-    model, delta_P0, delta_alpha, minimum_margin = create_model(true, network, set_of_hvdc, set_of_pst, 
+    model, delta_P0, delta_alpha, minimum_margin = create_model(true, network, set_of_hvdc, set_of_pst,
                                                                 set_of_quad_inc, dict_of_quad_inc_sensi)
 
     set_objective(model, MIN_SENSE, sum(delta_P0[hvdc] for hvdc in set_of_hvdc))
