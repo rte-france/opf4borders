@@ -22,7 +22,7 @@ using PrettyPrint
 
 _BASECASE  = "N"
 _SENSI = "sensi"
-_BRANCH = "ac_line"
+_BRANCH = "branch"
 _QUADS = "quads"
 _ELEMVARS="elemVars"
 _PERMANENT_LIMIT = "permanent_limit"
@@ -83,7 +83,7 @@ function read_json(file_name::String)
         end
     end
     # (sensi, branch, INC, element) ==> value
-    for (branchOrHvdc, v1) in json[_SENSI], (branch, v2) in v1, (INC,v3) in v2, (element,v4) in v3
+    for (branch, v2) in json[_SENSI][_BRANCH], (INC,v3) in v2, (element,v4) in v3
         network._sensi[branch,  INC, element] = v4
     end
     return network
@@ -142,6 +142,15 @@ function launch_optimization(file_name::String)
     launch_optimization(file_name, "results.json")
 end
 
+function  write_optimization_results(objective_val::Float64, delta_P0::JuMP.Containers.DenseAxisArray, delta_alpha::JuMP.Containers.DenseAxisArray,
+                                     network::NETWORK, set_of_hvdc::Set, set_of_pst::Set)
+    P0_value = Dict(hvdc => network._hvdcs[hvdc].elemP0+value(delta_P0[hvdc]) for hvdc in set_of_hvdc)
+    alpha0_value = Dict(pst => network._psts[pst].alpha0+value(delta_alpha[pst]) for pst in set_of_pst)
+    return Dict("objective_value" => objective_val,
+                "P0" => P0_value,
+                "alpha0" => alpha0_value)    
+end
+
 function launch_optimization(file_name::String, results_file_name::String)
     network = read_json(file_name)
     set_of_hvdc = Set(keys(network._hvdcs));
@@ -172,45 +181,73 @@ function launch_optimization(file_name::String, results_file_name::String)
     model, delta_P0, delta_alpha, minimum_margin = create_model(true, network, set_of_hvdc, set_of_pst,
                                                                 set_of_quad_inc, dict_of_quad_inc_sensi)
 
+    P0 = Dict(hvdc => network._hvdcs[hvdc].elemP0 for hvdc in set_of_hvdc)
+    alpha0 = Dict(pst => network._psts[pst].alpha0 for pst in set_of_pst)
+    results_dict = Dict("reference" => Dict("objective_value" => 0, "P0" => P0, "alpha0" => alpha0))
     set_objective(model, MIN_SENSE, sum(delta_P0[hvdc] for hvdc in set_of_hvdc))
     optimize!(model)
-    min_value = objective_value(model)
-    min_P0_value = Dict(hvdc => network._hvdcs[hvdc].elemP0+value(delta_P0[hvdc]) for hvdc in set_of_hvdc)
-    min_alpha0_value = Dict(pst => network._psts[pst].alpha0+value(delta_alpha[pst]) for pst in set_of_pst)
+    results_dict["min_min"] = write_optimization_results(objective_value(model), delta_P0, delta_alpha,
+                                                         network, set_of_hvdc, set_of_pst)
 
-    set_objective(model, MAX_SENSE, sum(delta_P0[hvdc] for hvdc in set_of_hvdc))
+    set_objective(model, MIN_SENSE, sum(- delta_P0[hvdc] for hvdc in set_of_hvdc))
     optimize!(model)
-    max_value = objective_value(model)
-    max_P0_value = Dict(hvdc => network._hvdcs[hvdc].elemP0+value(delta_P0[hvdc]) for hvdc in set_of_hvdc)
-    max_alpha0_value = Dict(pst => network._psts[pst].alpha0+value(delta_alpha[pst]) for pst in set_of_pst)
+    results_dict["max_max"] = write_optimization_results(objective_value(model), delta_P0, delta_alpha,
+                                                         network, set_of_hvdc, set_of_pst)
 
-    middle_P0_value = Dict(hvdc => 0.5*(min_P0_value[hvdc]+max_P0_value[hvdc]) for hvdc in set_of_hvdc)
+    set_objective(model, MIN_SENSE, sum((-1)^index * delta_P0[hvdc] for (index,hvdc) in enumerate(set_of_hvdc)))
+    optimize!(model)
+    results_dict["max_min"] = write_optimization_results(objective_value(model), delta_P0, delta_alpha,
+                                                         network, set_of_hvdc, set_of_pst)
+
+    set_objective(model, MIN_SENSE, sum((-1)^(index+1) * delta_P0[hvdc] for (index,hvdc) in enumerate(set_of_hvdc)))
+    optimize!(model)
+    results_dict["min_max"] = write_optimization_results(objective_value(model), delta_P0, delta_alpha,
+                                                         network, set_of_hvdc, set_of_pst)
+
+    set_objective(model, MIN_SENSE, sum(delta_P0[hvdc] for hvdc in set_of_hvdc))
+    optimize!(model)
+    results_dict["min_min"] = write_optimization_results(objective_value(model), delta_P0, delta_alpha,
+                                                         network, set_of_hvdc, set_of_pst)
+
+    for hvdc_optimized in set_of_hvdc
+        set_objective(model, MIN_SENSE, delta_P0[hvdc_optimized] + 0.01*sum(delta_P0[hvdc] for hvdc in set_of_hvdc))
+        optimize!(model)
+        results_dict["min+_"*hvdc_optimized] = write_optimization_results(objective_value(model), delta_P0, delta_alpha,
+                                                                          network, set_of_hvdc, set_of_pst)
+        set_objective(model, MIN_SENSE, delta_P0[hvdc_optimized] - 0.01*sum(delta_P0[hvdc] for hvdc in set_of_hvdc))
+        optimize!(model)
+        results_dict["min-_"*hvdc_optimized] = write_optimization_results(objective_value(model), delta_P0, delta_alpha,
+                                                                          network, set_of_hvdc, set_of_pst)
+
+        set_objective(model, MAX_SENSE, delta_P0[hvdc_optimized] - 0.01*sum(delta_P0[hvdc] for hvdc in set_of_hvdc))
+        optimize!(model)
+        results_dict["max-_"*hvdc_optimized] = write_optimization_results(objective_value(model), delta_P0, delta_alpha,
+                                                                          network, set_of_hvdc, set_of_pst)
+        set_objective(model, MAX_SENSE, delta_P0[hvdc_optimized] + 0.01*sum(delta_P0[hvdc] for hvdc in set_of_hvdc))
+        optimize!(model)
+        results_dict["max+_"*hvdc_optimized] = write_optimization_results(objective_value(model), delta_P0, delta_alpha,
+                                                                          network, set_of_hvdc, set_of_pst)
+    end
+
     set_objective(model, MAX_SENSE, minimum_margin)
     optimize!(model)
+    results_dict["maximum_margin"] = Dict("objective_value" => objective_value(model),
+                                          "P0" => Dict(hvdc => network._hvdcs[hvdc].elemP0+value(delta_P0[hvdc]) for hvdc in set_of_hvdc),
+                                          "alpha0" => Dict(pst => network._psts[pst].alpha0+value(delta_alpha[pst]) for pst in set_of_pst))
 
     marging_P0_value = Dict(hvdc =>network._hvdcs[hvdc].elemP0+value(delta_P0[hvdc]) for hvdc in set_of_hvdc)
     marging_alpha0_value = Dict(pst => network._psts[pst].alpha0+value(delta_alpha[pst]) for pst in set_of_pst)
 
-    println("The min safe HVDC setpoints are : ", min_P0_value)
-    println("Which corresponds to PST setpoints : ", min_alpha0_value)
-    println("\nThe max safe HVDC setpoints are : ", max_P0_value)
-    println("Which corresponds to PST setpoints : ", max_alpha0_value)
     println("\nThe HVDC setpoints maximizing the margins are : ", marging_P0_value)
     println("Which corresponds to PST setpoints : ", marging_alpha0_value)
     println("And the minimum_margin is (if negative this is an issue) ", value(minimum_margin))
-
-    for hvdc in set_of_hvdc
-        println(value(delta_P0[hvdc] + network._hvdcs[hvdc].elemP0 - middle_P0_value[hvdc]))
-    end
 
     if isfile(results_file_name)
         all_results = JSON.parsefile(results_file_name)
     else
         all_results = Dict()
     end
-    all_results[file_name] = Dict("Min safe points" => min_P0_value,
-                                  "Max safe points" => max_P0_value,
-                                  "Safest points" => middle_P0_value)
+    all_results[file_name] = results_dict
     open(results_file_name, "w") do file
         JSON.print(file, all_results, 2)
     end
