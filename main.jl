@@ -82,16 +82,19 @@ function read_json(file_name::String)
                 network._psts[name] = PST(name, v2[_MIN], v2[_MAX], v2[_ELEMP0])
         end
     end
-    # (sensi, branch, INC, element) ==> value
+    # (sensi, branch/hvdc, INC, element) ==> value
     for (branch, v2) in json[_SENSI][_BRANCH], (INC,v3) in v2, (element,v4) in v3
         network._sensi[branch,  INC, element] = v4
+    end
+    for (hvdc, v2) in json[_SENSI][_HVDC], (INC,v3) in v2, (element,v4) in v3
+        network._sensi[hvdc,  INC, element] = v4
     end
     return network
 end
 
 
 function create_model(quiet::Bool, network::NETWORK, set_of_hvdc::Set, set_of_pst::Set,
-                      set_of_quad_inc::Set, dict_of_quad_inc_sensi::Dict)
+                      set_of_quad_inc::Set, set_of_hvdc_inc::Set ,dict_of_quad_inc_sensi::Dict)
     model = Model(Xpress.Optimizer)
     MOI.set(model, MOI.Silent(), quiet)
 
@@ -113,10 +116,31 @@ function create_model(quiet::Bool, network::NETWORK, set_of_hvdc::Set, set_of_ps
 
     @objective(model, MIN_SENSE, sum(delta_P0[hvdc] for hvdc in set_of_hvdc))
 
+    @constraints(model,
+    begin
+        Power_Max_Pos[(hvdc, inc) in set_of_hvdc_inc],
+        0 <= network._hvdcs[hvdc].pMax +
+            (network._hvdcs[hvdc].elemP0 + network._sensi[hvdc, inc, _REFERENCE_CURRENT] +
+            delta_P0[hvdc] +
+            sum(val * delta_alpha[pst] for (pst, val) in dict_of_quad_inc_sensi[hvdc, inc] if pst in set_of_pst) +
+            sum(val * delta_P0[hvdc_other] for (hvdc_other, val) in dict_of_quad_inc_sensi[hvdc, inc] if hvdc_other in set_of_hvdc))
+    end
+    )
 
     @constraints(model,
     begin
-        Current_Max_Pos[(quad, inc) in set_of_quad_inc],
+        Power_Max_Neg[(hvdc, inc) in set_of_hvdc_inc],
+        0 <= network._hvdcs[hvdc].pMax -
+            (network._hvdcs[hvdc].elemP0 + network._sensi[hvdc, inc, _REFERENCE_CURRENT] +
+            delta_P0[hvdc] +
+            sum(val * delta_alpha[pst] for (pst, val) in dict_of_quad_inc_sensi[hvdc, inc] if pst in set_of_pst) +
+            sum(val * delta_P0[hvdc_other] for (hvdc_other, val) in dict_of_quad_inc_sensi[hvdc, inc] if hvdc_other in set_of_hvdc))
+    end
+    )
+
+    @constraints(model,
+    begin
+        Current_Max_Pos[(quad, inc) in set_of_quad_inc], # should check that the ref current is not null (= opened line)
         minimum_margin <= network._quads[quad].limits[_PERMANENT_LIMIT] -
             (network._sensi[quad, inc, _REFERENCE_CURRENT] +
             sum(val * delta_alpha[pst] for (pst, val) in dict_of_quad_inc_sensi[quad, inc] if pst in set_of_pst) +
@@ -156,11 +180,18 @@ function launch_optimization(file_name::String, results_file_name::String)
     set_of_hvdc = Set(keys(network._hvdcs));
     set_of_pst = Set(keys(network._psts));
     set_of_quad_inc = Set();
+    set_of_hvdc_inc = Set();
     dict_of_quad_inc_sensi = Dict()
 
-    for (quad, inc, element) in keys(network._sensi)
+    for (quad, inc, _) in keys(network._sensi)
+        # The quad is a monitored AC line or a PST
         if haskey(network._quads, quad) && ! haskey(dict_of_quad_inc_sensi, (quad, inc))
             push!(set_of_quad_inc, (quad, inc))
+            dict_of_quad_inc_sensi[quad, inc] = Dict()
+        end
+        # The quad is an HVDC with AC emulation
+        if haskey(network._hvdcs, quad) && !((quad, inc) in set_of_hvdc_inc)
+            push!(set_of_hvdc_inc, (quad, inc))
             dict_of_quad_inc_sensi[quad, inc] = Dict()
         end
     end
@@ -179,7 +210,7 @@ function launch_optimization(file_name::String, results_file_name::String)
     end
 
     model, delta_P0, delta_alpha, minimum_margin = create_model(true, network, set_of_hvdc, set_of_pst,
-                                                                set_of_quad_inc, dict_of_quad_inc_sensi)
+                                                                set_of_quad_inc, set_of_hvdc_inc, dict_of_quad_inc_sensi)
 
     P0 = Dict(hvdc => network._hvdcs[hvdc].elemP0 for hvdc in set_of_hvdc)
     alpha0 = Dict(pst => network._psts[pst].alpha0 for pst in set_of_pst)
