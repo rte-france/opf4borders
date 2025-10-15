@@ -42,7 +42,7 @@ function plot_results(file_name::String, data_key::String)
     mean_point = mean(extremal_points)
     sort!(extremal_points, by = x -> atan(x[2]-mean_point[2], x[1]-mean_point[1]))
     
-    f = Figure(size=(500,450))
+    f = Figure()
     ax = Axis(f[1, 1],
     title = "Safe setpoints for the HVDCs on "*data_key,
     xlabel = "Setpoint of "*hvdc1_name*" (MW)",
@@ -52,14 +52,12 @@ function plot_results(file_name::String, data_key::String)
     
     
     poly!(Point2f[(-2000,-2000), (-2000,2000), (2000,2000), (2000,-2000)], linestyle= :dash,
-    color = :white, strokecolor = :black, strokewidth = 1, label="Setpoint limits")
+          color = :white, strokecolor = :black, strokewidth = 1, label="Setpoint limits")
     poly!(extremal_points, color = :red, strokecolor = :black, strokewidth = 1, label="Safe area")
     scatter!(max_margin, color= :blue, label="Setpoints maximizing the margins")
     scatter!(reference_point, color= :black, label="Initial setpoints")
     
-    axislegend(position = :rb)
+    f[1, 2] = Legend(f, ax, framevisible = false, labelsize = 10.0f0)
     f
     save(split(data_key,".")[1]*".png", f)
 end
-
-plot_results("all_data_5011_withPST.json")
