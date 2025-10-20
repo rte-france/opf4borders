@@ -212,10 +212,27 @@ function  write_calculated_line_currents(delta_P0::JuMP.Containers.DenseAxisArra
     return dictionnary
 end
 
+function launch_optimization(file_name::String)
+    launch_optimization(file_name, "results.json", Set(), true)
+end
+
 function launch_optimization(file_name::String, results_file_name::String)
-    network = read_json(file_name)
-    set_of_hvdc = Set(keys(network._hvdcs));
-    set_of_pst = Set(keys(network._psts));
+    launch_optimization(file_name, results_file_name, Set(), true)
+end
+
+function launch_optimization(file_name::String, results_file_name::String, controllable_hvdcs::Set, pst_control::Bool)
+    network = read_json(file_name);
+    if isempty(controllable_hvdcs)
+        set_of_hvdc = Set(keys(network._hvdcs))
+    else
+        set_of_hvdc = controllable_hvdcs
+    end
+    if pst_control
+        set_of_pst = Set(keys(network._psts))
+    else
+        set_of_pst = Set()
+    end
+
     set_of_quad_inc = Set();
     set_of_hvdc_inc = Set();
     dict_of_quad_inc_sensi = Dict();
