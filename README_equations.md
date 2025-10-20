@@ -50,7 +50,6 @@ $$+ \sum_{h'\in\mathcal{H}} \left.\frac{\partial P^{h^\mathrm{eq}}}{\partial P^{
 
 $$+ \sum_{p\in\mathcal{P}} \left.\frac{\partial P^{h^\mathrm{eq}}}{\partial \alpha^p}\right|_0\Delta\alpha^p$$
 
-**As of today, the equivalent AC line is not in the model and the HVDC is optimized with a fully controllable setpoint.**
 
 ## Flow on a AC-line
 
@@ -74,10 +73,10 @@ $$-I^{\ell,\max}\leqslant I^\ell \leqslant I^{\ell,\max}$$
 And similarly for the HVDCs:
 $$-P^{h,\max}\leqslant P^h \leqslant P^{h,\max}$$
 
-Note that the behaviour of the HVDC when the setpoint is at its limit ($P^h = P^{h,\max}$ with no more variable part) is not implemented in the model.
+Note that the behaviour of the HVDC when the setpoint is saturated at its limit ($P^h = P^{h,\max}$ with no more variable part) is not implemented in the model yet, which forces the setpoint to be far enough from the limits ($P^h_c=P^{h,\max}$ and $P^h_c=0$ is not possible in this model).
 
 ## Contingencies
 In the current model, the N-1 rule is implemented taking into account no curative actions, hence we consider that the setpoints decided for the N state must be safe for all the contingencies.
 
-In reality, for each contingency, you need to do calculate the sensitivities accordingly, *ie* do an AC-loadflow post contingency and calculate a set of sensitivities on that network state. Then, all the variables written above are defined for each contingency (aswell as the basecase state) and the constraints must be verified for each contingency.
+In reality, for each contingency, you need to calculate the sensitivities accordingly, *ie* do an AC-loadflow post contingency and calculate a set of sensitivities on that network state. Then, all the variables written above are defined for each contingency (aswell as the basecase state) and the constraints must be verified for each contingency.
 
