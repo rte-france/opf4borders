@@ -195,6 +195,23 @@ function  write_optimization_results(objective_val::Float64, delta_P0::JuMP.Cont
                 "alpha0" => alpha0_value)    
 end
 
+function  write_calculated_line_currents(delta_P0::JuMP.Containers.DenseAxisArray, delta_alpha::JuMP.Containers.DenseAxisArray,
+                                         network::NETWORK, set_of_hvdc::Set, set_of_pst::Set, set_of_quad_inc::Set,
+                                         dict_of_quad_inc_sensi::Dict)
+    dictionnary = Dict()
+    for (quad, inc) in set_of_quad_inc
+        if ! haskey(dictionnary, inc)
+            dictionnary[inc] = Dict()
+        end
+        dictionnary[inc][quad] = network._sensi[quad, inc, _REFERENCE_CURRENT] +
+                                 sum(val * value(delta_P0[hvdc]) for (hvdc, val) in dict_of_quad_inc_sensi[quad, inc] if hvdc in set_of_hvdc)
+        if !isempty(set_of_pst)
+            dictionnary[inc][quad] += sum(val * value(delta_alpha[pst]) for (pst, val) in dict_of_quad_inc_sensi[quad, inc] if pst in set_of_pst)
+        end
+    end
+    return dictionnary
+end
+
 function launch_optimization(file_name::String, results_file_name::String)
     network = read_json(file_name)
     set_of_hvdc = Set(keys(network._hvdcs));
@@ -344,6 +361,11 @@ function launch_optimization(file_name::String, results_file_name::String)
     all_results[file_name] = results_dict
     open(results_file_name, "w") do file
         JSON.print(file, all_results, 2)
+    end
+    open("debug.json", "w") do debug_file
+        all_flows = write_calculated_line_currents(delta_P0, delta_alpha, network, set_of_hvdc,
+                                                   set_of_pst, set_of_quad_inc, dict_of_quad_inc_sensi)
+        JSON.print(debug_file, all_flows, 2)
     end
 end
 
