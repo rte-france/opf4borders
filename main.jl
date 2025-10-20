@@ -112,9 +112,17 @@ function create_model(quiet::Bool, network::NETWORK, set_of_hvdc::Set, set_of_ps
             network._psts[pst].alphaMax - network._psts[pst].alpha0
     end);
 
-    @variable(model, minimum_margin)
+    @variables(model,
+    begin
+        current_slack_pos[(quad, inc) in set_of_quad_inc]
+    end);
 
-    @objective(model, MIN_SENSE, sum(delta_P0[hvdc] for hvdc in set_of_hvdc))
+    @variables(model,
+    begin
+        current_slack_neg[(quad, inc) in set_of_quad_inc]
+    end);
+
+    @variable(model, minimum_margin)
 
     @constraints(model,
     begin
@@ -141,7 +149,7 @@ function create_model(quiet::Bool, network::NETWORK, set_of_hvdc::Set, set_of_ps
     @constraints(model,
     begin
         Current_Max_Pos[(quad, inc) in set_of_quad_inc], # should check that the ref current is not null (= opened line)
-        minimum_margin <= network._quads[quad].limits[_PERMANENT_LIMIT] -
+        current_slack_pos[(quad, inc)] <= network._quads[quad].limits[_PERMANENT_LIMIT] -
             (network._sensi[quad, inc, _REFERENCE_CURRENT] +
             sum(val * delta_alpha[pst] for (pst, val) in dict_of_quad_inc_sensi[quad, inc] if pst in set_of_pst) +
             sum(val * delta_P0[hvdc] for (hvdc, val) in dict_of_quad_inc_sensi[quad, inc] if hvdc in set_of_hvdc))
@@ -151,19 +159,31 @@ function create_model(quiet::Bool, network::NETWORK, set_of_hvdc::Set, set_of_ps
     @constraints(model,
     begin
         Current_Max_Neg[(quad, inc) in  set_of_quad_inc],
-        minimum_margin <= network._quads[quad].limits[_PERMANENT_LIMIT] +
+        current_slack_neg[(quad, inc)] <= network._quads[quad].limits[_PERMANENT_LIMIT] +
             network._sensi[quad, inc, _REFERENCE_CURRENT] +
             sum(val * delta_alpha[pst] for (pst, val) in dict_of_quad_inc_sensi[quad, inc] if pst in set_of_pst) +
             sum(val * delta_P0[hvdc] for (hvdc, val) in dict_of_quad_inc_sensi[quad, inc] if hvdc in set_of_hvdc)
     end
     )
 
-    @constraint(model, minimum_margin >= 0)
-    return model, delta_P0, delta_alpha, minimum_margin
-end
+    @constraints(model,
+    begin
+        Minimum_Margin_Neg[(quad, inc) in  set_of_quad_inc],
+        minimum_margin <= current_slack_neg[(quad, inc)]
+    end
+    )
 
-function launch_optimization(file_name::String)
-    launch_optimization(file_name, "results.json")
+    @constraints(model,
+    begin
+        Minimum_Margin_Pos[(quad, inc) in  set_of_quad_inc],
+        minimum_margin <= current_slack_pos[(quad, inc)]
+    end
+    )
+
+    # first check if a safe N / N-1 one state exists
+    @objective(model, MAX_SENSE, minimum_margin)
+
+    return model, delta_P0, delta_alpha, minimum_margin, current_slack_neg, current_slack_pos
 end
 
 function  write_optimization_results(objective_val::Float64, delta_P0::JuMP.Containers.DenseAxisArray, delta_alpha::JuMP.Containers.DenseAxisArray,
@@ -181,7 +201,7 @@ function launch_optimization(file_name::String, results_file_name::String)
     set_of_pst = Set(keys(network._psts));
     set_of_quad_inc = Set();
     set_of_hvdc_inc = Set();
-    dict_of_quad_inc_sensi = Dict()
+    dict_of_quad_inc_sensi = Dict();
 
     for (quad, inc, _) in keys(network._sensi)
         # The quad is a monitored AC line or a PST
@@ -209,8 +229,50 @@ function launch_optimization(file_name::String, results_file_name::String)
         println("no limits for line $quad but sensi provided")
     end
 
-    model, delta_P0, delta_alpha, minimum_margin = create_model(true, network, set_of_hvdc, set_of_pst,
-                                                                set_of_quad_inc, set_of_hvdc_inc, dict_of_quad_inc_sensi)
+    model, delta_P0, delta_alpha, minimum_margin, current_slack_neg, current_slack_pos =
+        create_model(true, network, set_of_hvdc, set_of_pst, set_of_quad_inc, set_of_hvdc_inc, dict_of_quad_inc_sensi)
+
+    optimize!(model)
+    minimum_margin_possible = value(minimum_margin)
+    println("The minimum margin possible is (if negative this is an issue) ", minimum_margin_possible)
+
+    if minimum_margin_possible > 0
+        # possible to satisfy all the constraints
+        fix(minimum_margin, 0.0)
+    else
+        problematic_contigencies = Set()
+        problematic_contigencies_overloads = Dict()
+        for (quad, inc) in set_of_quad_inc
+            if value(current_slack_neg[(quad, inc)]) < 0 || value(current_slack_pos[(quad, inc)]) < 0
+                push!(problematic_contigencies, inc)
+                if ! haskey(problematic_contigencies_overloads, inc)
+                    problematic_contigencies_overloads[inc] = Set()
+                end
+                push!(problematic_contigencies_overloads[inc], quad)
+            end
+        end
+        fix(minimum_margin, minimum_margin_possible - 1)
+        println("The following contingencies causes trouble: ", problematic_contigencies)
+        println("The following contingencies causes trouble: ", problematic_contigencies_overloads)
+        println("Removing them from optimization...")
+        for contingency in problematic_contigencies
+            set_objective(model, MAX_SENSE,
+                          sum(current_slack_neg[(quad, contingency)] +
+                              current_slack_pos[(quad, contingency)] for (quad, contingency) in set_of_quad_inc))
+            optimize!(model)
+            println("\nThe HVDC setpoints maximizing the margins for $contingency contingency is: ",
+                    Dict(hvdc =>network._hvdcs[hvdc].elemP0+value(delta_P0[hvdc]) for hvdc in set_of_hvdc))
+            println("Which corresponds to PST setpoints : ", 
+                    Dict(pst =>network._psts[pst].alpha0+value(delta_alpha[pst]) for pst in set_of_pst))
+        end
+        for (quad, inc) in set_of_quad_inc
+            if ! haskey(problematic_contigencies_overloads, inc) || ! (quad in problematic_contigencies_overloads[inc])
+                fix(current_slack_neg[(quad, inc)], 0.0)
+                fix(current_slack_pos[(quad, inc)], 0.0)
+            end
+        end
+    end
+
 
     P0 = Dict(hvdc => network._hvdcs[hvdc].elemP0 for hvdc in set_of_hvdc)
     alpha0 = Dict(pst => network._psts[pst].alpha0 for pst in set_of_pst)
@@ -260,6 +322,7 @@ function launch_optimization(file_name::String, results_file_name::String)
                                                                           network, set_of_hvdc, set_of_pst)
     end
 
+    unfix(minimum_margin)
     set_objective(model, MAX_SENSE, minimum_margin)
     optimize!(model)
     results_dict["maximum_margin"] = Dict("objective_value" => objective_value(model),
