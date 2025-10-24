@@ -2,6 +2,8 @@ using CairoMakie
 using JSON
 using Statistics
 
+include("main.jl")
+
 
 function plot_results(data_key::String)
     plot_results("results.json", data_key)
@@ -13,22 +15,20 @@ function plot_results(file_name::String, data_key::String)
     ie the name of the json data file used as entry for the optimization"""
     if isfile(file_name)
         all_results = JSON.parsefile(file_name)
+        network = read_json(data_key)
     else
         exit()
     end
     results_dict = all_results[data_key]
     
     extremal_points = Point2f[]
-    hvdc1_name = ""
-    hvdc2_name = ""
+    hvdc1_name, hvdc2_name = keys(network._hvdcs)
+
     max_margin = Point2f(0,0)
     reference_point = Point2f(0,0)
     
     for (calculation_type, calculation_result) in results_dict
         setpoints = calculation_result["P0"]
-        if isempty(hvdc1_name)
-            (hvdc1_name, hvdc2_name) = keys(setpoints)
-        end
         if calculation_type == "maximum_margin"
             max_margin = Point2f(setpoints[hvdc1_name], setpoints[hvdc2_name])
         elseif calculation_type == "reference"
@@ -49,10 +49,15 @@ function plot_results(file_name::String, data_key::String)
     ylabel = "Setpoint of "*hvdc2_name*" (MW)",
     aspect = DataAspect()
     )
-    
-    
-    poly!(Point2f[(-2000,-2000), (-2000,2000), (2000,2000), (2000,-2000)], linestyle= :dash,
+
+    min_hvdc1 = network._hvdcs[hvdc1_name].pMin
+    min_hvdc2 = network._hvdcs[hvdc2_name].pMin
+    max_hvdc1 = network._hvdcs[hvdc1_name].pMax
+    max_hvdc2 = network._hvdcs[hvdc2_name].pMax
+    poly!(Point2f[(min_hvdc1,min_hvdc2), (min_hvdc1,max_hvdc2),
+                  (max_hvdc1,max_hvdc2), (max_hvdc1,min_hvdc2)], linestyle= :dash,
           color = :white, strokecolor = :black, strokewidth = 1, label="Setpoint limits")
+
     poly!(extremal_points, color = :red, strokecolor = :black, strokewidth = 1, label="Safe area")
     scatter!(max_margin, color= :blue, label="Setpoints maximizing the margins")
     scatter!(reference_point, color= :black, label="Initial setpoints")
