@@ -2,3 +2,5 @@ Manifest.toml
 *.png
 data
 results.json
+__pycache__
+*env*
