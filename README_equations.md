@@ -87,9 +87,13 @@ To ensure the feasiblility of the optimization problem, the limit constraints ar
 $$\forall c, I^\ell_{c} \leqslant I^{\ell,\max} - \epsilon^\ell_{c,+}$$
 $$\forall c, I^\ell_{c} \geqslant - I^{\ell,\max} + \epsilon^\ell_{c,-}$$
 
+We define a third slack that gives the final margin:
+
+$$\forall c, \epsilon^\ell_c \leqslant \min(\epsilon^\ell_{c,+}, \epsilon^\ell_{c,-})$$
+
 If $\epsilon$ is positive, the limit is satisfied, hence we define the minimum margin $m$ as:
 
-$$ \forall c, m \leqslant \min(\epsilon^\ell_{c,+},\epsilon^\ell_{c,-}) $$
+$$\forall c, m \leqslant \epsilon^\ell_{c}$$
 
 ## Feasibility of the optimization
 The first optimization determines whether a safe state (both in basecase and for all N-1), by maximizing the minimum margin $m$.
