@@ -13,188 +13,10 @@
     See the License for the specific language governing permissions and
     limitations under the License.
 =#
-
-using JSON
-using JuMP
-using Xpress
 using PrettyPrint
 
-
-_BASECASE  = "N"
-_SENSI = "sensitivities"
-_BRANCH = "branch"
-_QUADS = "quads"
-_ELEMVARS="elemVars"
-_PERMANENT_LIMIT = "permanent_limit"
-_MIN = "min"
-_MAX = "max"
-_ELEMP0 = "referenceSetpoint"
-_HVDC = "hvdc"
-_PST = "pst"
-_REFERENCE_CURRENT = "referenceCurrent"
-
-struct HVDC
-    name::String;
-    pMin::Float64;
-    pMax::Float64;
-    elemP0::Float64;
-end
-
-struct PST
-    name::String;
-    alphaMin::Float64;
-    alphaMax::Float64;
-    alpha0::Float64;
-end
-
-struct QUAD
-    name::String
-    limits::Dict{String, Float64}
-    # permanentLimit::Float64;
-end
-
-struct NETWORK
-    _hvdcs::Dict{String, HVDC};
-    _psts::Dict{String, PST};
-    _quads::Dict{String, QUAD};
-
-    _sensi::Dict{Tuple{String, String, String}, Float64};
-
-    NETWORK() = new(Dict{String, HVDC}(), Dict{String, PST}(), Dict{String, QUAD}(),
-                    Dict{Tuple{String, String, String}, Float64}());
-
-end
-
-function read_json(file_name::String)
-    """Read the unique json entry and populate the different structures needed for the optimization"""
-    json = JSON.parsefile(file_name)
-    JSON_KEYS = [_QUADS, _ELEMVARS,_SENSI]
-    network = NETWORK()
-
-    for (name, quad_values) in json[_QUADS]
-        network._quads[name] = QUAD(name, Dict(_PERMANENT_LIMIT => quad_values[_PERMANENT_LIMIT]))
-    end
-
-    for (hvdcOrPst, v1) in json[_ELEMVARS], (name, v2) in v1
-        if hvdcOrPst == _HVDC
-                network._hvdcs[name] = HVDC(name, v2[_MIN], v2[_MAX], v2[_ELEMP0])
-        elseif hvdcOrPst == _PST
-                network._psts[name] = PST(name, v2[_MIN], v2[_MAX], v2[_ELEMP0])
-        end
-    end
-    # (sensi, branch/hvdc, INC, element) ==> value
-    for (branch, v2) in json[_SENSI][_BRANCH], (INC,v3) in v2, (element,v4) in v3
-        network._sensi[branch,  INC, element] = v4
-    end
-    for (hvdc, v2) in json[_SENSI][_HVDC], (INC,v3) in v2, (element,v4) in v3
-        network._sensi[hvdc,  INC, element] = v4
-    end
-    return network
-end
-
-
-function create_model(quiet::Bool, network::NETWORK, set_of_hvdc::Set, set_of_pst::Set,
-                      set_of_quad_inc::Set, set_of_hvdc_inc::Set, dict_of_quad_inc_sensi::Dict, ist_margin)
-    model = Model(Xpress.Optimizer)
-    MOI.set(model, MOI.Silent(), quiet)
-
-    @variables(model,
-    begin
-        network._hvdcs[hvdc].pMin -  network._hvdcs[hvdc].elemP0 <=
-            delta_P0[hvdc in set_of_hvdc] <=
-            network._hvdcs[hvdc].pMax - network._hvdcs[hvdc].elemP0
-    end);
-
-    @variables(model,
-    begin
-        network._psts[pst].alphaMin -  network._psts[pst].alpha0 <=
-            delta_alpha[pst in set_of_pst] <=
-            network._psts[pst].alphaMax - network._psts[pst].alpha0
-    end);
-
-    @variables(model,
-    begin
-        current_slack_pos[(quad, inc) in set_of_quad_inc]
-    end);
-
-    @variables(model,
-    begin
-        current_slack_neg[(quad, inc) in set_of_quad_inc]
-    end);
-
-    @variables(model,
-    begin
-        current_slack[(quad, inc) in set_of_quad_inc]
-    end);
-
-    @constraints(model,
-    begin
-        Unique_Current_Slack_Neg[(quad, inc) in set_of_quad_inc],
-        current_slack[(quad, inc)] <= current_slack_neg[(quad, inc)]
-    end)
-
-    @constraints(model,
-    begin
-        Unique_Current_Slack_Pos[(quad, inc) in set_of_quad_inc],
-        current_slack[(quad, inc)] <= current_slack_pos[(quad, inc)]
-    end)
-
-    @variable(model, minimum_margin)
-
-    @constraints(model,
-    begin
-        Power_Max_Pos[(hvdc, inc) in set_of_hvdc_inc],
-        0 <= - network._hvdcs[hvdc].pMin +
-            (network._hvdcs[hvdc].elemP0 + network._sensi[hvdc, inc, _REFERENCE_CURRENT] +
-            delta_P0[hvdc] +
-            sum(val * delta_alpha[pst] for (pst, val) in dict_of_quad_inc_sensi[hvdc, inc] if pst in set_of_pst) +
-            sum(val * delta_P0[hvdc_other] for (hvdc_other, val) in dict_of_quad_inc_sensi[hvdc, inc] if hvdc_other in set_of_hvdc))
-    end
-    )
-
-    @constraints(model,
-    begin
-        Power_Max_Neg[(hvdc, inc) in set_of_hvdc_inc],
-        0 <= network._hvdcs[hvdc].pMax -
-            (network._hvdcs[hvdc].elemP0 + network._sensi[hvdc, inc, _REFERENCE_CURRENT] +
-            delta_P0[hvdc] +
-            sum(val * delta_alpha[pst] for (pst, val) in dict_of_quad_inc_sensi[hvdc, inc] if pst in set_of_pst) +
-            sum(val * delta_P0[hvdc_other] for (hvdc_other, val) in dict_of_quad_inc_sensi[hvdc, inc] if hvdc_other in set_of_hvdc))
-    end
-    )
-
-    @constraints(model,
-    begin
-        Current_Max_Pos[(quad, inc) in set_of_quad_inc], # should check that the ref current is not null (= opened line)
-        current_slack_pos[(quad, inc)] <= ist_margin * network._quads[quad].limits[_PERMANENT_LIMIT] -
-            (network._sensi[quad, inc, _REFERENCE_CURRENT] +
-            sum(val * delta_alpha[pst] for (pst, val) in dict_of_quad_inc_sensi[quad, inc] if pst in set_of_pst) +
-            sum(val * delta_P0[hvdc] for (hvdc, val) in dict_of_quad_inc_sensi[quad, inc] if hvdc in set_of_hvdc))
-    end
-    )
-
-    @constraints(model,
-    begin
-        Current_Max_Neg[(quad, inc) in  set_of_quad_inc],
-        current_slack_neg[(quad, inc)] <= ist_margin * network._quads[quad].limits[_PERMANENT_LIMIT] +
-            network._sensi[quad, inc, _REFERENCE_CURRENT] +
-            sum(val * delta_alpha[pst] for (pst, val) in dict_of_quad_inc_sensi[quad, inc] if pst in set_of_pst) +
-            sum(val * delta_P0[hvdc] for (hvdc, val) in dict_of_quad_inc_sensi[quad, inc] if hvdc in set_of_hvdc)
-    end
-    )
-
-    @constraints(model,
-    begin
-        Minimum_Margin_Neg[(quad, inc) in  set_of_quad_inc],
-        minimum_margin <= current_slack[(quad, inc)]
-    end
-    )
-
-    # first check if a safe N / N-1 one state exists
-    @objective(model, MAX_SENSE, minimum_margin)
-
-    return model, delta_P0, delta_alpha, minimum_margin, current_slack
-end
+include("read_inputs.jl")
+include("model.jl")
 
 function write_optimization_results(objective_val::Float64, delta_P0::JuMP.Containers.DenseAxisArray, delta_alpha::JuMP.Containers.DenseAxisArray,
                                     network::NETWORK, set_of_hvdc::Set, set_of_pst::Set)
@@ -273,7 +95,7 @@ function launch_optimization(file_name::String, results_file_name::String, contr
         println("no limits for line $quad but sensi provided")
     end
 
-    model, delta_P0, delta_alpha, minimum_margin, current_slack =
+    model, delta_P0, delta_alpha, minimum_margin, current_slack = #, hvdc_slack =
         create_model(true, network, set_of_hvdc, set_of_pst, set_of_quad_inc, set_of_hvdc_inc, dict_of_quad_inc_sensi, 1)
 
     optimize!(model)
@@ -310,6 +132,9 @@ function launch_optimization(file_name::String, results_file_name::String, contr
             println("Which corresponds to PST setpoints : ", 
                     Dict(pst => network._psts[pst].alpha0+value(delta_alpha[pst]) for pst in set_of_pst))
             println("The margin (on problematic lines) is then: ", objective_value(model))
+            # cur_slack = Dict((quad, cont) => value(current_slack[(quad, cont)]) for (quad, cont) in problematic_quad_inc)
+            # println("Negative values of slack: ", Dict((quad,cont) => cur_slack[(quad,cont)]
+            #                             for (quad, cont) in problematic_contigencies if cur_slack[(quad,cont)] < 0))
         end
         for (quad, inc) in set_of_quad_inc
             if ! haskey(problematic_contigencies_overloads, inc) || ! (quad in problematic_contigencies_overloads[inc])
