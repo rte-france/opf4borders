@@ -38,9 +38,33 @@ from .aux import get_pst_sensitivities, launch_sensitivity_analysis, add_exchang
 #   - to active psts (.csv)
 #   - to redispatchable generators (.csv)
 #   - to active hvdc lines (.csv)
-# data_folder = os.path.join(FILE_PATH, "../data/pglib_opf_case1354_pegase")
 
 debug = True
+
+def add_proportionnal_redispatching(network:pp.network.Network, country1:str, country2:str):
+    """Add all generators with more than 10MW of Pmax to the generators and calculate the
+    repartition key for countertrading"""
+    gens = network.get_generators(attributes=["name", "target_p", "min_p", "max_p", "voltage_level_id"])
+    vlvs = network.get_voltage_levels(attributes=["substation_id"])
+    subs = network.get_substations(attributes=["country"])
+
+    # Calculating repartition key to change the exchange : the production in country1 increases if the
+    # redispatching is positive
+    gens = gens[gens["max_p"] > 0.1] # filter for max production > 10 MW
+    gens = gens.join(vlvs, on="voltage_level_id")
+    gens = gens.join(subs, on="substation_id")
+    gens = gens[gens["country"].isin([country1, country2])] # filter for production inside pertinent countries
+    gens["repartition_key"] = pd.DataFrame({"diff1": gens["max_p"] - gens["target_p"],
+                                            "diff2": gens["target_p"] - gens["min_p"]}).min(axis=1)
+    gens["repartition_key"] = gens["repartition_key"].clip(lower=0)
+    total_repartition = gens.groupby("country")["repartition_key"].transform("sum")
+    gens["repartition_key"] /= total_repartition
+    # print(f"Sum of maximal production by country is {repartitions}")
+
+    gens.loc[gens["country"] == country2, "repartition_key"] *= -1
+
+    # Changing injection
+    return gens["repartition_key"].to_dict()
 
 # Parameters
 PARAMS = lf.Parameters(
@@ -54,7 +78,7 @@ PARAMS = lf.Parameters(
 def main(data_folder:str, network_path:str, monitored_branches_path:str, contingencies_path:str,
          active_hvdc_lines_path:str, active_psts_path:str = None, slack_bus_path:str = None,
          redispatchable_generators_path:str = None, hvdc_target:float = None,
-         force_setpoint:bool = False):
+         force_setpoint:bool = False, maximum_counter_trading:float = 0):
     """Load network and csvs with branch_ids (monitored and contingencies)
     Add contingencies to monitored_branches if they are not already present"""
 
@@ -112,6 +136,18 @@ def main(data_folder:str, network_path:str, monitored_branches_path:str, conting
     else:
         redispatchable_generators_ids = []
 
+    if maximum_counter_trading > 0:
+        generators_for_ct = add_proportionnal_redispatching(network, country1, country2)
+        redispatchable_generators_ids = list(set(redispatchable_generators_ids).union(generators_for_ct.keys()))
+        print(f"Countertrading ratios : {generators_for_ct}")
+        counter_trading_info = {"counter_trading": {
+                "min":-maximum_counter_trading,
+                "max":maximum_counter_trading,
+                }}
+    else:
+        generators_for_ct = {}
+        counter_trading_info = {}
+
     # Calculate sensis with respect to active psts
     if active_psts_path is not None:
         active_psts_ids = pd.read_csv(active_psts_path)["pst_id"].to_list()
@@ -150,10 +186,16 @@ def main(data_folder:str, network_path:str, monitored_branches_path:str, conting
 
     hvdc_map, hvdc_dict = get_hvdc_data(hvdc_df, active_hvdc_lines_ids)
     pst_dict = get_pst_data(network, active_psts_ids)
-    elem_vars = {"hvdc":hvdc_dict, "pst":pst_dict}
+    elem_vars = {
+        "hvdc":hvdc_dict,
+        "pst":pst_dict,
+        "counterTrading":counter_trading_info
+        }
     print(f"AC exchange is {situation_description}")
     print(f"Details on HVDCs : {elem_vars['hvdc']}")
     print(f"Details on PSTs : {elem_vars['pst']}")
+    situation_description["country1"] = country1
+    situation_description["country2"] = country2
 
     # Add fictitious generators at extremities of controllable HVDCs
     fict_gen = add_generators_at_hvdcs_extremities(network, list(hvdc_map.keys()))
@@ -199,11 +241,11 @@ def main(data_folder:str, network_path:str, monitored_branches_path:str, conting
                                              redispatchable_generators_ids, active_psts_ids,
                                              ac_eq_line_hvdc_lines_ids, PARAMS)
 
-        hvdc_sensitivities_dict, gens_sensitivities_dict = \
-            get_hvdc_sensitivities_from_generators(result, fict_gen, "generators")
+        hvdc_sensitivities_dict, gens_sensitivities_dict, ct_sensitivities_dict = \
+            get_hvdc_sensitivities_from_generators(result, fict_gen, generators_for_ct, "generators")
 
-        hvdc_hvdc_sensitivities_dict, hvdc_gens_sensitivities_dict = \
-            get_hvdc_sensitivities_from_generators(result, fict_gen, "generators_ac_eq_line")
+        hvdc_hvdc_sensitivities_dict, hvdc_gens_sensitivities_dict, hvdc_ct_sensitivities_dict = \
+            get_hvdc_sensitivities_from_generators(result, fict_gen, generators_for_ct, "generators_ac_eq_line")
 
         branches_reference_dict = get_reference_current_dictionnary(result, "generators")
         psts_sensitivities_dict = get_pst_sensitivities(result, "psts")
@@ -212,8 +254,11 @@ def main(data_folder:str, network_path:str, monitored_branches_path:str, conting
 
         for branch_name, ref_current in branches_reference_dict.items():
             branches_sensitivities[branch_name][case_name] = ref_current
-            for dic_to_add in [gens_sensitivities_dict, psts_sensitivities_dict, hvdc_sensitivities_dict]:
+            for dic_to_add in [gens_sensitivities_dict, psts_sensitivities_dict,
+                               hvdc_sensitivities_dict]:
                 branches_sensitivities[branch_name][case_name].update(dic_to_add.get(branch_name, {}))
+            branches_sensitivities[branch_name][case_name]["counter_trading"] = \
+                ct_sensitivities_dict.get(branch_name, 0)
  
         for hvdc_name in hvdc_emulation_lines_ids:
             hvdc_eq_line = "ac_eq_line_" + hvdc_name
@@ -221,6 +266,8 @@ def main(data_folder:str, network_path:str, monitored_branches_path:str, conting
             for dic_to_add in [hvdc_reference_dict, hvdc_gens_sensitivities_dict,
                                hvdc_psts_sensitivities_dict, hvdc_hvdc_sensitivities_dict]:
                 ac_eq_sensitivities[hvdc_name][case_name].update(dic_to_add.get(hvdc_eq_line, {}))
+            ac_eq_sensitivities[hvdc_name][case_name]["counter_trading"] = \
+                hvdc_ct_sensitivities_dict.get(hvdc_name, 0)
         # print(ac_eq_sensitivities)
 
         # Undo contingency
@@ -248,12 +295,13 @@ def main(data_folder:str, network_path:str, monitored_branches_path:str, conting
                         f"{'setpoint' if force_setpoint else 'ac_emulation'}.json"
     with open(output_filepath, 'w') as all_data_file:
         json.dump(merged_json, all_data_file, indent=4, sort_keys=True)
+    print(f"File written at {os.path.abspath(output_filepath)}")
 
     timers["JSON writing"] = time() - current_time
     current_time = time()
     print(timers)
-    print(f"Temps total {sum(k for k in timers.values()):.3f}\n"
-          f"Temps moyen pour une sensi {sum(timers[f'Sensi for {contingency}'] for contingency in cases) / len(cases)}")
+    print(f"Total time spent {sum(k for k in timers.values()):.3f}\n"
+          f"Mean time spent for one case {sum(timers[f'Sensi for {contingency}'] for contingency in cases) / len(cases)}")
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
@@ -274,5 +322,5 @@ if __name__ == "__main__":
     FORCE_SETPOINT = False
     main(DATA_FOLDER, IIDM_NAME, MONITORED_BRANCHES_PATH, CONTINGENCIES_PATH, HVDC_LINES,
          ACTIVE_PSTS_PATH, SLACK_BUS_PATH, REDISPATCHABLE_GENERATORS, HDVC_TARGET,
-         FORCE_SETPOINT)
+         FORCE_SETPOINT, 500)
  

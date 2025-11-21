@@ -462,7 +462,7 @@ def launch_sensitivity_analysis(network:nt.Network, monitored_branches_ids:list,
 
 
 def get_hvdc_sensitivities_from_generators(result:ss.AcSensitivityAnalysis, fict_gen:pd.DataFrame,
-                                           matrix_name:str):
+                                           generators_to_ct:dict, matrix_name:str):
     """Returns a dictionnary of sensitivities of lines on generators injection and on HVDC setpoint
     variation"""
     sensitivities_df = result.get_sensitivity_matrix(matrix_name).round(6).fillna(0)
@@ -474,8 +474,11 @@ def get_hvdc_sensitivities_from_generators(result:ss.AcSensitivityAnalysis, fict
         sensitivities_df.drop(hvdc_row[["origin", "end"]], inplace=True)
 
     hvdc_sensitivities_dict = hvdc_sensitivities_df.to_dict()
-    gens_sensitivities_dict = sensitivities_df.to_dict()
-    return hvdc_sensitivities_dict, gens_sensitivities_dict
+    countertrading_df = sensitivities_df[sensitivities_df.index.isin(generators_to_ct.keys())]
+    countertrading_coefficient = pd.Series(generators_to_ct)
+    countertrading_dict = countertrading_df.mul(countertrading_coefficient, axis=0).sum().to_dict()
+    gens_sensitivities_dict = sensitivities_df[~sensitivities_df.index.isin(generators_to_ct.keys())].to_dict()
+    return hvdc_sensitivities_dict, gens_sensitivities_dict, countertrading_dict
 
 
 def get_reference_current_dictionnary(result:ss.AcSensitivityAnalysis, matrix_name:str):
