@@ -64,6 +64,13 @@ function launch_optimization(file_name::String, results_file_name::String, contr
     else
         set_of_pst = Set()
     end
+    
+    available_counter = Set(keys(network._countertrading))
+    for counter in available_counter
+        if network._countertrading[counter].pMax == 0 & network._countertrading[counter].pMin ==0
+            delete!(available_counter, counter)
+        end
+    end
 
     set_of_quad_inc = Set();
     set_of_hvdc_inc = Set();
@@ -96,7 +103,8 @@ function launch_optimization(file_name::String, results_file_name::String, contr
     end
 
     model, delta_P0, delta_alpha, minimum_margin, current_slack = #, hvdc_slack =
-        create_model(true, network, set_of_hvdc, set_of_pst, set_of_quad_inc, set_of_hvdc_inc, dict_of_quad_inc_sensi, 1)
+        create_model(true, network, set_of_hvdc, set_of_pst, available_counter, 
+                     set_of_quad_inc, set_of_hvdc_inc, dict_of_quad_inc_sensi, 1)
 
     optimize!(model)
     minimum_margin_possible = value(minimum_margin)

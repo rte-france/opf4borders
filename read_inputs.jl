@@ -29,6 +29,7 @@ _ELEMP0 = "referenceSetpoint"
 _HVDC = "hvdc"
 _PST = "pst"
 _REFERENCE_CURRENT = "referenceCurrent"
+_COUNTER_TRADING = "counterTrading"
 
 struct HVDC
     name::String;
@@ -54,10 +55,11 @@ struct NETWORK
     _hvdcs::Dict{String, HVDC};
     _psts::Dict{String, PST};
     _quads::Dict{String, QUAD};
+    _countertrading::Dict{String, HVDC};
 
     _sensi::Dict{Tuple{String, String, String}, Float64};
 
-    NETWORK() = new(Dict{String, HVDC}(), Dict{String, PST}(), Dict{String, QUAD}(),
+    NETWORK() = new(Dict{String, HVDC}(), Dict{String, PST}(), Dict{String, QUAD}(), Dict{String, HVDC}(),
                     Dict{Tuple{String, String, String}, Float64}());
 
 end
@@ -72,12 +74,16 @@ function read_json(file_name::String)
         network._quads[name] = QUAD(name, Dict(_PERMANENT_LIMIT => quad_values[_PERMANENT_LIMIT]))
     end
 
-    for (hvdcOrPst, v1) in json[_ELEMVARS], (name, v2) in v1
-        if hvdcOrPst == _HVDC
-                network._hvdcs[name] = HVDC(name, v2[_MIN], v2[_MAX], v2[_ELEMP0])
-        elseif hvdcOrPst == _PST
-                network._psts[name] = PST(name, v2[_MIN], v2[_MAX], v2[_ELEMP0])
-        end
+    for (hvdc_name, hvdc_info) in get(json[_ELEMVARS], _HVDC, Dict())
+        network._hvdcs[hvdc_name] = HVDC(hvdc_name, hvdc_info[_MIN], hvdc_info[_MAX], hvdc_info[_ELEMP0])
+    end
+    for (pst_name, pst_info) in get(json[_ELEMVARS], _PST, Dict())
+        network._psts[pst_name] = PST(pst_name, pst_info[_MIN], pst_info[_MAX], pst_info[_ELEMP0])
+    end
+    for (counter, counter_info) in get(json[_ELEMVARS], _COUNTER_TRADING, Dict())
+        network._countertrading[counter] = HVDC(counter, counter_info[_MIN], counter_info[_MAX], 0)
+        # Counter trading is defined compared to the initial situation, so it is 
+        # necessarily at 0 on the input data
     end
     # (sensi, branch/hvdc, INC, element) ==> value
     for (branch, v2) in json[_SENSI][_BRANCH], (INC,v3) in v2, (element,v4) in v3
