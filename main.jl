@@ -67,7 +67,7 @@ function launch_optimization(file_name::String, results_file_name::String, contr
     
     available_counter = Set(keys(network._countertrading))
     for counter in available_counter
-        if network._countertrading[counter].pMax == 0 & network._countertrading[counter].pMin ==0
+        if network._countertrading[counter].pMax == 0 && network._countertrading[counter].pMin ==0
             delete!(available_counter, counter)
         end
     end
@@ -102,13 +102,21 @@ function launch_optimization(file_name::String, results_file_name::String, contr
         println("no limits for line $quad but sensi provided")
     end
 
-    model, delta_P0, delta_alpha, minimum_margin, current_slack = #, hvdc_slack =
+    model, delta_P0, delta_alpha, minimum_margin, current_slack, counter_trading =
         create_model(true, network, set_of_hvdc, set_of_pst, available_counter, 
                      set_of_quad_inc, set_of_hvdc_inc, dict_of_quad_inc_sensi, 1)
 
+    fix(minimum_margin, 0)
+    set_objective(model, MIN_SENSE, counter_trading)
+    optimize!(model)
+    println("The minimum counter trading needed for safety is: ", value(counter_trading))
+    fix(counter_trading, value(counter_trading) + 100)
+    unfix(minimum_margin)
+    set_objective(model, MAX_SENSE, minimum_margin)
     optimize!(model)
     minimum_margin_possible = value(minimum_margin)
     println("The maximum margin possible is (if negative this is an issue) ", minimum_margin_possible)
+    println("It needs a level of counter trading: ", value(counter_trading))
 
     if minimum_margin_possible > 0
         # possible to satisfy all the constraints
@@ -127,7 +135,7 @@ function launch_optimization(file_name::String, results_file_name::String, contr
         end
         fix(minimum_margin, minimum_margin_possible - 1)
         println("The following contingencies causes trouble: ", problematic_contigencies)
-        println("The following contingencies causes trouble: ", problematic_contigencies_overloads)
+        # println("The following contingencies causes trouble: ", problematic_contigencies_overloads)
         println("Removing them from optimization...")
         for contingency in problematic_contigencies
             println("Contingency is ", contingency)

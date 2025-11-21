@@ -46,6 +46,8 @@ function create_model(quiet::Bool, network::NETWORK, set_of_hvdc::Set, set_of_ps
         counter_trading_abs[counter in set_of_counter]
     end);
 
+    @variable(model, total_counter_trading);
+
     @variables(model,
     begin
         current_slack_pos[(quad, inc) in set_of_quad_inc]
@@ -112,6 +114,8 @@ function create_model(quiet::Bool, network::NETWORK, set_of_hvdc::Set, set_of_ps
         - counter_trading[counter] <= counter_trading_abs[counter]
     end)
 
+    @constraint(model, sum(counter_trading_abs[counter] for counter in set_of_counter) <= total_counter_trading)
+
     @variable(model, minimum_margin)
 
     @constraints(model,
@@ -171,5 +175,5 @@ function create_model(quiet::Bool, network::NETWORK, set_of_hvdc::Set, set_of_ps
     # first check if a safe N / N-1 one state exists
     @objective(model, MAX_SENSE, minimum_margin)
 
-    return model, delta_P0, delta_alpha, minimum_margin, current_slack#, hvdc_slack
+    return model, delta_P0, delta_alpha, minimum_margin, current_slack, total_counter_trading
 end
