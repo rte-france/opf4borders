@@ -16,23 +16,40 @@
 using  JuMP, Xpress
 
 function create_model(quiet::Bool, network::NETWORK, set_of_hvdc::Set, set_of_pst::Set, set_of_counter::Set,
-                      set_of_quad_inc::Set, set_of_hvdc_inc::Set, dict_of_quad_inc_sensi::Dict, ist_margin)
+                      set_of_inc::Set, set_of_quad_inc::Set, set_of_hvdc_inc::Set,
+                      dict_of_quad_inc_sensi::Dict, ist_margin)
     model = Model(Xpress.Optimizer)
     MOI.set(model, MOI.Silent(), quiet)
 
     @variables(model,
     begin
         network._hvdcs[hvdc].pMin -  network._hvdcs[hvdc].elemP0 <=
-            delta_P0[hvdc in set_of_hvdc] <=
+            delta_P0[hvdc in set_of_hvdc, inc in set_of_inc] <=
             network._hvdcs[hvdc].pMax - network._hvdcs[hvdc].elemP0
     end);
 
-    @variables(model,
+    @constraints(model,
+    begin
+        Curative_HVDC_Setpoint[hvdc in set_of_hvdc, inc in set_of_inc],
+        network._hvdcs[hvdc].pMin -  network._hvdcs[hvdc].elemP0 <=
+            delta_P0[hvdc, _BASECASE] + (inc != _BASECASE ? delta_P0[hvdc, inc] : 0) <=
+            network._hvdcs[hvdc].pMax - network._hvdcs[hvdc].elemP0
+    end);
+
+    @variables(model, # Could also constrain the deviation from the preventive setpoint
     begin
         network._psts[pst].alphaMin -  network._psts[pst].alpha0 <=
-            delta_alpha[pst in set_of_pst] <=
+            delta_alpha[pst in set_of_pst, inc in set_of_inc] <=
             network._psts[pst].alphaMax - network._psts[pst].alpha0
     end);
+
+    @constraints(model, 
+    begin
+        Curative_PST_Setpoint[pst in set_of_pst, inc in set_of_inc],
+        network._psts[pst].alphaMin -  network._psts[pst].alpha0 <=
+            delta_alpha[pst, _BASECASE] + (inc != _BASECASE ? delta_alpha[pst, inc] : 0) <=
+            network._psts[pst].alphaMax - network._psts[pst].alpha0
+    end)
 
     @variables(model,
     begin
@@ -123,9 +140,11 @@ function create_model(quiet::Bool, network::NETWORK, set_of_hvdc::Set, set_of_ps
         Power_Max_Pos[(hvdc, inc) in set_of_hvdc_inc],
         0 <= - network._hvdcs[hvdc].pMin +
             (network._hvdcs[hvdc].elemP0 + network._sensi[hvdc, inc, _REFERENCE_CURRENT] +
-            delta_P0[hvdc] +
-            sum(val * delta_alpha[pst] for (pst, val) in dict_of_quad_inc_sensi[hvdc, inc] if pst in set_of_pst) +
-            sum(val * delta_P0[hvdc_other] for (hvdc_other, val) in dict_of_quad_inc_sensi[hvdc, inc] if hvdc_other in set_of_hvdc)) +
+            delta_P0[hvdc, _BASECASE] + (inc != _BASECASE ? delta_P0[hvdc, inc] : 0) + 
+            sum(val * (delta_alpha[pst, _BASECASE] + (inc != _BASECASE ? delta_alpha[pst, inc] : 0))
+                for (pst, val) in dict_of_quad_inc_sensi[hvdc, inc] if pst in set_of_pst) +
+            sum(val * (delta_P0[hvdc_other, _BASECASE] + (inc != _BASECASE ? delta_P0[hvdc_other, inc] : 0))
+                for (hvdc_other, val) in dict_of_quad_inc_sensi[hvdc, inc] if hvdc_other in set_of_hvdc)) +
             sum(val * counter_trading[counter] for (counter, val) in dict_of_quad_inc_sensi[hvdc, inc] if counter in set_of_counter)
     end
     )
@@ -136,9 +155,11 @@ function create_model(quiet::Bool, network::NETWORK, set_of_hvdc::Set, set_of_ps
         # (inc == _BASECASE : hvdc_slack_neg[hvdc] : 0) <= network._hvdcs[hvdc].pMax -
         0 <= network._hvdcs[hvdc].pMax -
             (network._hvdcs[hvdc].elemP0 + network._sensi[hvdc, inc, _REFERENCE_CURRENT] +
-            delta_P0[hvdc] +
-            sum(val * delta_alpha[pst] for (pst, val) in dict_of_quad_inc_sensi[hvdc, inc] if pst in set_of_pst) +
-            sum(val * delta_P0[hvdc_other] for (hvdc_other, val) in dict_of_quad_inc_sensi[hvdc, inc] if hvdc_other in set_of_hvdc)) +
+            delta_P0[hvdc, _BASECASE] + (inc != _BASECASE ? delta_P0[hvdc, inc] : 0) + 
+            sum(val * (delta_alpha[pst, _BASECASE] + (inc != _BASECASE ? delta_alpha[pst, inc] : 0))
+                for (pst, val) in dict_of_quad_inc_sensi[hvdc, inc] if pst in set_of_pst) +
+            sum(val * (delta_P0[hvdc_other, _BASECASE] + (inc != _BASECASE ? delta_P0[hvdc_other, inc] : 0))
+                for (hvdc_other, val) in dict_of_quad_inc_sensi[hvdc, inc] if hvdc_other in set_of_hvdc)) +
             sum(val * counter_trading[counter] for (counter, val) in dict_of_quad_inc_sensi[hvdc, inc] if counter in set_of_counter)
     end
     )
@@ -148,8 +169,10 @@ function create_model(quiet::Bool, network::NETWORK, set_of_hvdc::Set, set_of_ps
         Current_Max_Pos[(quad, inc) in set_of_quad_inc], # should check that the ref current is not null (= opened line)
         current_slack_pos[(quad, inc)] <= ist_margin * network._quads[quad].limits[_PERMANENT_LIMIT] -
             (network._sensi[quad, inc, _REFERENCE_CURRENT] +
-            sum(val * delta_alpha[pst] for (pst, val) in dict_of_quad_inc_sensi[quad, inc] if pst in set_of_pst) +
-            sum(val * delta_P0[hvdc] for (hvdc, val) in dict_of_quad_inc_sensi[quad, inc] if hvdc in set_of_hvdc)) +
+            sum(val * (delta_alpha[pst, _BASECASE] + (inc != _BASECASE ? delta_alpha[pst, inc] : 0))
+                for (pst, val) in dict_of_quad_inc_sensi[quad, inc] if pst in set_of_pst) +
+            sum(val * (delta_P0[hvdc, _BASECASE] + (inc != _BASECASE ? delta_P0[hvdc, inc] : 0))
+                for (hvdc, val) in dict_of_quad_inc_sensi[quad, inc] if hvdc in set_of_hvdc)) +
             sum(val * counter_trading[counter] for (counter, val) in dict_of_quad_inc_sensi[quad, inc] if counter in set_of_counter)
     end
     )
@@ -159,8 +182,10 @@ function create_model(quiet::Bool, network::NETWORK, set_of_hvdc::Set, set_of_ps
         Current_Max_Neg[(quad, inc) in  set_of_quad_inc],
         current_slack_neg[(quad, inc)] <= ist_margin * network._quads[quad].limits[_PERMANENT_LIMIT] +
             network._sensi[quad, inc, _REFERENCE_CURRENT] +
-            sum(val * delta_alpha[pst] for (pst, val) in dict_of_quad_inc_sensi[quad, inc] if pst in set_of_pst) +
-            sum(val * delta_P0[hvdc] for (hvdc, val) in dict_of_quad_inc_sensi[quad, inc] if hvdc in set_of_hvdc) +
+            sum(val * (delta_alpha[pst, _BASECASE] + (inc != _BASECASE ? delta_alpha[pst, inc] : 0))
+                for (pst, val) in dict_of_quad_inc_sensi[quad, inc] if pst in set_of_pst) +
+            sum(val * (delta_P0[hvdc, _BASECASE] + (inc != _BASECASE ? delta_P0[hvdc, inc] : 0))
+                for (hvdc, val) in dict_of_quad_inc_sensi[quad, inc] if hvdc in set_of_hvdc) +
             sum(val * counter_trading[counter] for (counter, val) in dict_of_quad_inc_sensi[quad, inc] if counter in set_of_counter)
     end
     )
