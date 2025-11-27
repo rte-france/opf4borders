@@ -25,7 +25,7 @@ from .aux import adjust_network, create_ac_lines_to_simulate_hvdc_ac_emulation
 from .aux import define_slack_bus, get_branches_limits, get_pst_data, get_hvdc_data
 from .aux import apply_contingency_modification, calculate_exchange, get_border_countries
 from .aux import add_generators_at_hvdcs_extremities, hvdc_lines_full_setpoint
-from .aux import get_hvdc_sensitivities_from_generators, get_reference_current_dictionnary
+from .aux import get_hvdc_sensitivities_from_generators, get_reference_flow_dictionnary
 from .aux import get_pst_sensitivities, launch_sensitivity_analysis, add_exchange_sign_to_hvdc_df
 
 # Calculate sensitivities
@@ -139,7 +139,7 @@ def main(data_folder:str, network_path:str, monitored_branches_path:str, conting
     if maximum_counter_trading > 0:
         generators_for_ct = add_proportionnal_redispatching(network, country1, country2)
         redispatchable_generators_ids = list(set(redispatchable_generators_ids).union(generators_for_ct.keys()))
-        print(f"Countertrading ratios : {generators_for_ct}")
+        # print(f"Countertrading ratios : {generators_for_ct}")
         counter_trading_info = {"counter_trading": {
                 "min":-maximum_counter_trading,
                 "max":maximum_counter_trading,
@@ -247,9 +247,9 @@ def main(data_folder:str, network_path:str, monitored_branches_path:str, conting
         hvdc_hvdc_sensitivities_dict, hvdc_gens_sensitivities_dict, hvdc_ct_sensitivities_dict = \
             get_hvdc_sensitivities_from_generators(result, fict_gen, generators_for_ct, "generators_ac_eq_line")
 
-        branches_reference_dict = get_reference_current_dictionnary(result, "generators")
+        branches_reference_dict = get_reference_flow_dictionnary(result, "generators")
         psts_sensitivities_dict = get_pst_sensitivities(result, "psts")
-        hvdc_reference_dict = get_reference_current_dictionnary(result, "generators_ac_eq_line")
+        hvdc_reference_dict = get_reference_flow_dictionnary(result, "generators_ac_eq_line")
         hvdc_psts_sensitivities_dict = get_pst_sensitivities(result, "psts_ac_eq_line")
 
         for branch_name, ref_current in branches_reference_dict.items():

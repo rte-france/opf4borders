@@ -183,7 +183,7 @@ def test_ac_line_sensitivity_calculation_generator_in_n(injection_variation:floa
 
     result = launch_sensitivity_analysis(network, monitored_branches,
                                          [generator_name], [], [], PARAMS)
-    _, gens_sensitivities = get_hvdc_sensitivities_from_generators(result, pd.DataFrame(), "generators")
+    _, gens_sensitivities, _ = get_hvdc_sensitivities_from_generators(result, pd.DataFrame(), {}, "generators")
     print(gens_sensitivities)
 
     current_target = network.get_generators(attributes=["target_p"]).loc[generator_name]
@@ -218,7 +218,7 @@ def test_ac_line_sensitivity_calculation_hvdc_in_n(injection_variation:float, di
 
     result = launch_sensitivity_analysis(network, monitored_branches,
                                          list(hvdc_to_fict_gen.loc[hvdc_name]), [], [], PARAMS)
-    hvdc_sensitivities, _ = get_hvdc_sensitivities_from_generators(result, hvdc_to_fict_gen, "generators")
+    hvdc_sensitivities, *_ = get_hvdc_sensitivities_from_generators(result, hvdc_to_fict_gen, {}, "generators")
     print(hvdc_sensitivities)
 
     network.update_hvdc_lines(id="HERA9AJAX1", target_p=initial_target + injection_variation)

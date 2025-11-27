@@ -481,7 +481,7 @@ def get_hvdc_sensitivities_from_generators(result:ss.AcSensitivityAnalysis, fict
     return hvdc_sensitivities_dict, gens_sensitivities_dict, countertrading_dict
 
 
-def get_reference_current_dictionnary(result:ss.AcSensitivityAnalysis, matrix_name:str):
+def get_reference_flow_dictionnary(result:ss.AcSensitivityAnalysis, matrix_name:str):
     """Returns the reference current in a dictionnary"""
     branches_reference = result.get_reference_matrix(matrix_name).fillna(0)
     branches_reference_dict = branches_reference.rename({"reference_values":"referenceCurrent"}
