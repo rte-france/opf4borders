@@ -66,7 +66,7 @@ $$\frac{\partial I^\ell}{\partial P^{h}} = \frac{\partial I^\ell}{\partial P^\ma
 where $P^\mathrm{end}, P^\mathrm{or}$ is the power injection at the (respectively) $\mathrm{end}$ and $\mathrm{origin}$ nodes of the HVDC.
 
 ## Line limits
-The flow on a monitored line $\ell$ must not exceed the allowed limit $I^{\ell,\max}$: 
+The flow on a monitored line $\ell$ must not exceed the allowed limit $I^{\ell,\max}$:
 
 $$-I^{\ell,\max}\leqslant I^\ell \leqslant I^{\ell,\max}$$
 
@@ -80,3 +80,40 @@ In the current model, the N-1 rule is implemented taking into account no curativ
 
 In reality, for each contingency, you need to calculate the sensitivities accordingly, *ie* do an AC-loadflow post contingency and calculate a set of sensitivities on that network state. Then, all the variables written above are defined for each contingency (aswell as the basecase state) and the constraints must be verified for each contingency.
 
+# Optimization workflow
+## Relaxed constraints
+To ensure the feasiblility of the optimization problem, the limit constraints are relaxed with a slack variable:
+
+$$\forall c, I^\ell_{c} \leqslant I^{\ell,\max} - \epsilon^\ell_{c,+}$$
+$$\forall c, I^\ell_{c} \geqslant - I^{\ell,\max} + \epsilon^\ell_{c,-}$$
+
+We define a third slack that gives the final margin:
+
+$$\forall c, \epsilon^\ell_c \leqslant \min(\epsilon^\ell_{c,+}, \epsilon^\ell_{c,-})$$
+
+If $\epsilon$ is positive, the limit is satisfied, hence we define the minimum margin $m$ as:
+
+$$\forall c, m \leqslant \epsilon^\ell_{c}$$
+
+## Feasibility of the optimization
+The first optimization determines whether a safe state (both in basecase and for all N-1), by maximizing the minimum margin $m$.
+
+$$ \max m $$
+
+If $m$ is negative, at least one contingency creates a constraint that a common preventive optimization cannot solve. 
+
+## Optimization of the problematic N-1 (if $m<0$)
+If it is the case, an optimization problem tries to solve separately the problematic cases.
+From the previous optimization problem, we get those cases defined by 
+$$ \{ c | \epsilon^\ell_{c,+} < 0 \perp \epsilon^\ell_{c,-} < 0 \} $$
+
+For all those unsolved $c^u$, we check if some (curative) setpoints could solve the issue:
+
+$$\max \sum_\ell (\epsilon^\ell_{c^u,+} + \epsilon^\ell_{c^u,-})$$
+
+## Optimization without the problematic N-1
+Then, a bunch of optimization is launched, to define a safe set of HVDC setpoints. The idea is to maximize/minimize linear combination of the setpoints, which defines the edges of the safe state.
+
+$$ \max \sum_h \pm \Delta P^{h,c} $$
+
+If $m$ was positive, all contigencies are kept (we fix $\epsilon = 0$ to make the constraint hard). If not, the problematic N-1 are dropped (we fix only the slacks for the feasible N-1, the problematic ones are free).
