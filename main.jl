@@ -19,9 +19,15 @@ include("read_inputs.jl")
 include("model.jl")
 
 function write_optimization_results(objective_val::Float64, delta_P0::JuMP.Containers.DenseAxisArray, delta_alpha::JuMP.Containers.DenseAxisArray,
-                                    network::NETWORK, set_of_hvdc::Set, set_of_pst::Set)
-    P0_value = Dict(hvdc => network._hvdcs[hvdc].elemP0+value(delta_P0[hvdc, _BASECASE]) for hvdc in set_of_hvdc)
-    alpha0_value = Dict(pst => network._psts[pst].alpha0+value(delta_alpha[pst, _BASECASE]) for pst in set_of_pst)
+                                    network::NETWORK, set_of_hvdc::Set, set_of_pst::Set, set_of_inc::Set)
+    P0_value = Dict(hvdc => Dict(inc => 
+                                 network._hvdcs[hvdc].elemP0 + value(delta_P0[hvdc, _BASECASE]) +
+                                 (inc == _BASECASE ? 0 : value(delta_P0[hvdc, inc])) for inc in set_of_inc)
+                    for hvdc in set_of_hvdc)
+    alpha0_value = Dict(pst => Dict(inc =>
+                                    network._psts[pst].alpha0 + value(delta_alpha[pst, _BASECASE]) +
+                                    (inc == _BASECASE ? 0 : value(delta_alpha[pst, inc])) for inc in set_of_inc)
+                        for pst in set_of_pst)
     return Dict("objective_value" => objective_val,
                 "P0" => P0_value,
                 "alpha0" => alpha0_value)    
@@ -36,9 +42,11 @@ function write_calculated_line_currents(delta_P0::JuMP.Containers.DenseAxisArray
             dictionnary[inc] = Dict()
         end
         dictionnary[inc][quad] = network._sensi[quad, inc, _REFERENCE_CURRENT] +
-                                 sum(val * value(delta_P0[hvdc, _BASECASE]) for (hvdc, val) in dict_of_quad_inc_sensi[quad, inc] if hvdc in set_of_hvdc)
+                                 sum(val * value(delta_P0[hvdc, _BASECASE]) for (hvdc, val) in dict_of_quad_inc_sensi[quad, inc] if hvdc in set_of_hvdc) +
+                                 (inc == _BASECASE ? 0 : sum(val * value(delta_P0[hvdc, inc])) for (hvdc, val) in dict_of_quad_inc_sensi[quad, inc] if hvdc in set_of_hvdc)
         if !isempty(set_of_pst)
-            dictionnary[inc][quad] += sum(val * value(delta_alpha[pst, _BASECASE]) for (pst, val) in dict_of_quad_inc_sensi[quad, inc] if pst in set_of_pst)
+            dictionnary[inc][quad] += sum(val * value(delta_alpha[pst, _BASECASE]) for (pst, val) in dict_of_quad_inc_sensi[quad, inc] if pst in set_of_pst) +
+                                      (inc == _BASECASE ? 0 : sum(val * value(delta_alpha[pst, inc])) for (pst, val) in dict_of_quad_inc_sensi[quad, inc] if pst in set_of_pst)
         end
     end
     return dictionnary
@@ -170,54 +178,53 @@ function launch_optimization(file_name::String, results_file_name::String, contr
     set_objective(model, MIN_SENSE, sum(delta_P0[hvdc, _BASECASE] for hvdc in set_of_hvdc))
     optimize!(model)
     results_dict["min_min"] = write_optimization_results(objective_value(model), delta_P0, delta_alpha,
-                                                         network, set_of_hvdc, set_of_pst)
+                                                         network, set_of_hvdc, set_of_pst, set_of_inc)
 
     set_objective(model, MIN_SENSE, sum(- delta_P0[hvdc, _BASECASE] for hvdc in set_of_hvdc))
     optimize!(model)
     results_dict["max_max"] = write_optimization_results(objective_value(model), delta_P0, delta_alpha,
-                                                         network, set_of_hvdc, set_of_pst)
+                                                         network, set_of_hvdc, set_of_pst, set_of_inc)
 
     set_objective(model, MIN_SENSE, sum((-1)^index * delta_P0[hvdc, _BASECASE] for (index,hvdc) in enumerate(set_of_hvdc)))
     optimize!(model)
     results_dict["max_min"] = write_optimization_results(objective_value(model), delta_P0, delta_alpha,
-                                                         network, set_of_hvdc, set_of_pst)
+                                                         network, set_of_hvdc, set_of_pst, set_of_inc)
 
     set_objective(model, MIN_SENSE, sum((-1)^(index+1) * delta_P0[hvdc, _BASECASE] for (index,hvdc) in enumerate(set_of_hvdc)))
     optimize!(model)
     results_dict["min_max"] = write_optimization_results(objective_value(model), delta_P0, delta_alpha,
-                                                         network, set_of_hvdc, set_of_pst)
+                                                         network, set_of_hvdc, set_of_pst, set_of_inc)
 
     set_objective(model, MIN_SENSE, sum(delta_P0[hvdc, _BASECASE] for hvdc in set_of_hvdc))
     optimize!(model)
     results_dict["min_min"] = write_optimization_results(objective_value(model), delta_P0, delta_alpha,
-                                                         network, set_of_hvdc, set_of_pst)
+                                                         network, set_of_hvdc, set_of_pst, set_of_inc)
 
     for hvdc_optimized in set_of_hvdc
         set_objective(model, MIN_SENSE, delta_P0[hvdc_optimized, _BASECASE] + 0.01*sum(delta_P0[hvdc, _BASECASE] for hvdc in set_of_hvdc))
         optimize!(model)
         results_dict["min+_"*hvdc_optimized] = write_optimization_results(objective_value(model), delta_P0, delta_alpha,
-                                                                          network, set_of_hvdc, set_of_pst)
+                                                                          network, set_of_hvdc, set_of_pst, set_of_inc)
         set_objective(model, MIN_SENSE, delta_P0[hvdc_optimized, _BASECASE] - 0.01*sum(delta_P0[hvdc, _BASECASE] for hvdc in set_of_hvdc))
         optimize!(model)
         results_dict["min-_"*hvdc_optimized] = write_optimization_results(objective_value(model), delta_P0, delta_alpha,
-                                                                          network, set_of_hvdc, set_of_pst)
+                                                                          network, set_of_hvdc, set_of_pst, set_of_inc)
 
         set_objective(model, MAX_SENSE, delta_P0[hvdc_optimized, _BASECASE] - 0.01*sum(delta_P0[hvdc, _BASECASE] for hvdc in set_of_hvdc))
         optimize!(model)
         results_dict["max-_"*hvdc_optimized] = write_optimization_results(objective_value(model), delta_P0, delta_alpha,
-                                                                          network, set_of_hvdc, set_of_pst)
+                                                                          network, set_of_hvdc, set_of_pst, set_of_inc)
         set_objective(model, MAX_SENSE, delta_P0[hvdc_optimized, _BASECASE] + 0.01*sum(delta_P0[hvdc, _BASECASE] for hvdc in set_of_hvdc))
         optimize!(model)
         results_dict["max+_"*hvdc_optimized] = write_optimization_results(objective_value(model), delta_P0, delta_alpha,
-                                                                          network, set_of_hvdc, set_of_pst)
+                                                                          network, set_of_hvdc, set_of_pst, set_of_inc)
     end
 
     unfix(minimum_margin)
     set_objective(model, MAX_SENSE, minimum_margin)
     optimize!(model)
-    results_dict["maximum_margin"] = Dict("objective_value" => objective_value(model),
-                                          "P0" => Dict(hvdc => network._hvdcs[hvdc].elemP0+value(delta_P0[hvdc, _BASECASE]) for hvdc in set_of_hvdc),
-                                          "alpha0" => Dict(pst => network._psts[pst].alpha0+value(delta_alpha[pst, _BASECASE]) for pst in set_of_pst))
+    results_dict["maximum_margin"] = write_optimization_results(objective_value(model), delta_P0, delta_alpha, network,
+                                                                set_of_hvdc, set_of_pst, set_of_inc)
 
     marging_P0_value = Dict(hvdc =>network._hvdcs[hvdc].elemP0+value(delta_P0[hvdc, _BASECASE]) for hvdc in set_of_hvdc)
     marging_alpha0_value = Dict(pst => network._psts[pst].alpha0+value(delta_alpha[pst, _BASECASE]) for pst in set_of_pst)
@@ -235,11 +242,11 @@ function launch_optimization(file_name::String, results_file_name::String, contr
     open(results_file_name, "w") do file
         JSON.print(file, all_results, 2)
     end
-    open("debug.json", "w") do debug_file
-        all_flows = write_calculated_line_currents(delta_P0, delta_alpha, network, set_of_hvdc,
-                                                   set_of_pst, set_of_quad_inc, dict_of_quad_inc_sensi)
-        JSON.print(debug_file, all_flows, 2)
-    end
+    # open("debug.json", "w") do debug_file
+    #     all_flows = write_calculated_line_currents(delta_P0, delta_alpha, network, set_of_hvdc,
+    #                                                set_of_pst, set_of_quad_inc, dict_of_quad_inc_sensi)
+    #     JSON.print(debug_file, all_flows, 2)
+    # end
 end
 
 # launch_optimization("all_data.json")

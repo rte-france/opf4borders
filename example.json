@@ -30,26 +30,26 @@
         }
       }
     },
-    "hvdc_line": {}
+    "hvdc": {}
   },
   "elemVars": {
     "hvdc": {
       "HVDC1": {
         "min": -2000.0,
         "max": 2000.0,
-        "ref_setpoint": 1400.0
+        "referenceSetpoint": 1400.0
       },
       "HVDC2": {
         "min": -2000.0,
         "max": 2000.0,
-        "ref_setpoint": 2000
+        "referenceSetpoint": 2000
       }
     },
     "pst": {
       "PST1": {
         "min": -42.79999923706055,
         "max": 42.79999923706055,
-        "ref_setpoint": 8.119999885559082
+        "referenceSetpoint": 8.119999885559082
       }
     }
   },

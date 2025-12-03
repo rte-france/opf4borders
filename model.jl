@@ -21,6 +21,8 @@ function create_model(quiet::Bool, network::NETWORK, set_of_hvdc::Set, set_of_ps
     model = Model(Xpress.Optimizer)
     MOI.set(model, MOI.Silent(), quiet)
 
+    inc_without_basecase = delete!(deepcopy(set_of_inc), _BASECASE)
+
     @variables(model,
     begin
         network._hvdcs[hvdc].pMin -  network._hvdcs[hvdc].elemP0 <=
@@ -30,9 +32,9 @@ function create_model(quiet::Bool, network::NETWORK, set_of_hvdc::Set, set_of_ps
 
     @constraints(model,
     begin
-        Curative_HVDC_Setpoint[hvdc in set_of_hvdc, inc in set_of_inc],
+        Curative_HVDC_Setpoint[hvdc in set_of_hvdc, inc in inc_without_basecase],
         network._hvdcs[hvdc].pMin -  network._hvdcs[hvdc].elemP0 <=
-            delta_P0[hvdc, _BASECASE] + (inc != _BASECASE ? delta_P0[hvdc, inc] : 0) <=
+            delta_P0[hvdc, _BASECASE] + delta_P0[hvdc, inc] <=
             network._hvdcs[hvdc].pMax - network._hvdcs[hvdc].elemP0
     end);
 
@@ -45,11 +47,14 @@ function create_model(quiet::Bool, network::NETWORK, set_of_hvdc::Set, set_of_ps
 
     @constraints(model, 
     begin
-        Curative_PST_Setpoint[pst in set_of_pst, inc in set_of_inc],
-        network._psts[pst].alphaMin -  network._psts[pst].alpha0 <=
-            delta_alpha[pst, _BASECASE] + (inc != _BASECASE ? delta_alpha[pst, inc] : 0) <=
-            network._psts[pst].alphaMax - network._psts[pst].alpha0
-    end)
+        Curative_PST_Setpoint[pst in set_of_pst, inc in inc_without_basecase],
+        # network._psts[pst].alphaMin -  network._psts[pst].alpha0 <=
+        #     delta_alpha[pst, _BASECASE] + delta_alpha[pst, inc] <=
+        #     network._psts[pst].alphaMax - network._psts[pst].alpha0
+        network._psts[pst].alphaMin / 5 <=
+            delta_alpha[pst, inc] <=
+            network._psts[pst].alphaMax / 5
+    end);
 
     @variables(model,
     begin
