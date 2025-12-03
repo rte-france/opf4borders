@@ -30,11 +30,11 @@ function plot_results(file_name::String, data_key::String)
     for (calculation_type, calculation_result) in results_dict
         setpoints = calculation_result["P0"]
         if calculation_type == "maximum_margin"
-            max_margin = Point2f(setpoints[hvdc1_name], setpoints[hvdc2_name])
+            max_margin = Point2f(setpoints[hvdc1_name][_BASECASE], setpoints[hvdc2_name][_BASECASE])
         elseif calculation_type == "reference"
             reference_point = Point2f(setpoints[hvdc1_name], setpoints[hvdc2_name])
         else
-            push!(extremal_points, Point2f(setpoints[hvdc1_name], setpoints[hvdc2_name]))
+            push!(extremal_points, Point2f(setpoints[hvdc1_name][_BASECASE], setpoints[hvdc2_name][_BASECASE]))
         end
     end
     
