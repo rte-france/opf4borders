@@ -238,7 +238,9 @@ def create_ac_lines_to_simulate_hvdc_ac_emulation(network: nt.Network, active_hv
                                 bus_or_busbar_section_id_1=busbar_origin.index[0], position_order_1=1,
                                 bus_or_busbar_section_id_2=busbar_end.index[0], position_order_2=1)
 
-    updated_p0 = hvdc_angle_droop.loc[hvdc_lines_ids]["p0"].values / 100  # Convert to pu
+    updated_p0 = hvdc_angle_droop.loc[hvdc_lines_ids]["p0"].values
+    if network.per_unit:
+        updated_p0 = updated_p0 / 100 # Convert to pu
     updated_hvdc_lines = pd.DataFrame(
         index=hvdc_lines_ids,
         columns=["target_p"],

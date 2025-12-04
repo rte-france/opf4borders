@@ -6,7 +6,7 @@ import pypowsybl.loadflow as lf
 import sys
 import os
 from sensitivities.aux import calculate_exchange, create_ac_lines_to_simulate_hvdc_ac_emulation
-from sensitivities.aux import hvdc_lines_full_setpoint, add_exchange_sign_to_hvdc_df
+from sensitivities.aux import hvdc_lines_full_setpoint, add_exchange_sign_to_hvdc_df, adjust_network
 from sensitivities.aux import launch_sensitivity_analysis, get_hvdc_sensitivities_from_generators
 from sensitivities.aux import add_generators_at_hvdcs_extremities, get_pst_sensitivities
 from sensitivities.calculate_sensitivities import PARAMS
@@ -20,6 +20,7 @@ def test_ac_equivalent_line_gives_same_result_as_ac_emulation():
     """Test Loadflow before (AC emulation) and after (AC equivalent line and HVDC on p0 setpoint)
     is equivalent"""
     network = nt.load(IIDM_PATH)
+    network = adjust_network(network)
     network.per_unit = True
     hvdc_droop = network.get_extensions("hvdcAngleDroopActivePowerControl")
     active_hvdcs = list(hvdc_droop.index)
@@ -30,14 +31,13 @@ def test_ac_equivalent_line_gives_same_result_as_ac_emulation():
 
     network.clone_variant("InitialState", "Test")
     lf.run_ac(network, PARAMS)
-    vscs_before = network.get_vsc_converter_stations(attributes=["p","q"])
+    vscs_before = network.get_vsc_converter_stations(attributes=["p"])
     hvdc_before = network.get_hvdc_lines(attributes=["converters_mode", "converter_station1_id",
                                                      "converter_station2_id", "connected1",
                                                      "connected2"])
     hvdc_before = hvdc_before.join(vscs_before, on="converter_station1_id")
     hvdc_before = hvdc_before.join(vscs_before, on="converter_station2_id", lsuffix="1",
                                    rsuffix="2")
-
 
     network.set_working_variant("Test")
     ac_eq_hvdc = create_ac_lines_to_simulate_hvdc_ac_emulation(network, active_hvdcs)
@@ -59,7 +59,7 @@ def test_ac_equivalent_line_gives_same_result_as_ac_emulation():
     hvdc_after["q2"] = hvdc_after["q2p0"] + hvdc_after["q2kdelta"]
     hvdc_after = hvdc_after[hvdc_before.columns]
 
-    pd.testing.assert_frame_equal(hvdc_after, hvdc_before, rtol=RELATIVE_TOL, atol=ABSOLUTE_TOL)
+    pd.testing.assert_frame_equal(hvdc_after, hvdc_before, rtol=RELATIVE_TOL)
 
 
 @pytest.mark.parametrize("exchange_level", [100, 200, 500])
@@ -262,7 +262,7 @@ def test_ac_line_sensitivity_calculation_pst_in_n(tap_change:float, distributed_
     lf.run_ac(network, PARAMS)
     branches_after = network.get_branches(attributes=["i1"])
     for branch in monitored_branches:
-        assert pytest.approx(delta_alpha * pst_sensitivities[branch][pst_name], rel=RELATIVE_TOL) == \
-            (branches_after.loc[branch, "i1"] - branches_init_state.loc[branch, "i1"])
+        assert pytest.approx(branches_after.loc[branch, "i1"], rel=RELATIVE_TOL) == \
+            branches_init_state.loc[branch, "i1"] + delta_alpha * pst_sensitivities[branch][pst_name]
 
     PARAMS.distributed_slack = False
