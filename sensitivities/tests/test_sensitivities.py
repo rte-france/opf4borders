@@ -118,7 +118,8 @@ def test_calculate_exchange_only_hvdc_lines(exchange_level):
     hvdc_droop = network.get_extensions("hvdcAngleDroopActivePowerControl")
     hvdc_droop["enabled"] = [False, False]
     network.update_extensions("hvdcAngleDroopActivePowerControl", hvdc_droop)
-    network.update_hvdc_lines(id=["HERA9AJAX1", "HERA9AJAX1bis"], target_p=[exchange_level/2]*2)
+    network.update_hvdc_lines(id=["HERA9AJAX1", "HERA9AJAX1bis"], target_p=[exchange_level/2]*2,
+                              converters_mode=["SIDE_1_RECTIFIER_SIDE_2_INVERTER"]*2)
     network.update_lines(id=["HADESL71ATHEN_ACLS", "HADESL72ATHEN_ACLS", "ZEUSL61ULYSS_ACLS",
                              "ZEUSL62ULYSS_ACLS"], connected1=[False]*4, connected2=[False]*4)
 
@@ -127,6 +128,42 @@ def test_calculate_exchange_only_hvdc_lines(exchange_level):
     exchange = calculate_exchange(network, hvdcs, "FR", "ES")
     assert pytest.approx(exchange_level, rel=RELATIVE_TOL) == exchange["total_exchange"]
     assert pytest.approx(exchange_level, rel=RELATIVE_TOL) == exchange["hvdc_exchange"]
+
+
+@pytest.mark.parametrize("exchange_level", [100, 200, 500])
+def test_calculate_exchange_only_hvdc_lines_opposite_direction(exchange_level):
+    """Test exchange level calculation with two HVDC lines in setpoint connecting the border
+    
+    Network :       ES    /     FR
+                     Ze       Ul
+                     |        |
+     exchange_level  Ha       At
+                     |        |
+                     Aj- +/- -He -exchange_level
+    """
+    network = nt.load(IIDM_PATH)
+
+    gens = network.get_generators(attributes=["target_p"])
+    loads = network.get_loads(attributes=["p0"])
+    gens["target_p"] = [0, 0, 0, 0, 0, exchange_level, 0, 0]
+    loads["p0"] = [0, 0, 0, exchange_level]
+    print(gens, loads)
+    network.update_generators(gens)
+    network.update_loads(loads)
+
+    hvdc_droop = network.get_extensions("hvdcAngleDroopActivePowerControl")
+    hvdc_droop["enabled"] = [False, False]
+    network.update_extensions("hvdcAngleDroopActivePowerControl", hvdc_droop)
+    network.update_hvdc_lines(id=["HERA9AJAX1", "HERA9AJAX1bis"], target_p=[exchange_level/2]*2,
+                              converters_mode=["SIDE_1_INVERTER_SIDE_2_RECTIFIER"]*2)
+    network.update_lines(id=["HADESL71ATHEN_ACLS", "HADESL72ATHEN_ACLS", "ZEUSL61ULYSS_ACLS",
+                             "ZEUSL62ULYSS_ACLS"], connected1=[False]*4, connected2=[False]*4)
+
+    lf.run_ac(network)
+    hvdcs = add_exchange_sign_to_hvdc_df(network, "FR", "ES")
+    exchange = calculate_exchange(network, hvdcs, "FR", "ES")
+    assert pytest.approx(-exchange_level, rel=RELATIVE_TOL) == exchange["total_exchange"]
+    assert pytest.approx(-exchange_level, rel=RELATIVE_TOL) == exchange["hvdc_exchange"]
 
 
 @pytest.mark.parametrize("exchange_level", [100, 200, 500])

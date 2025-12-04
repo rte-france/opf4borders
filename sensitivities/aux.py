@@ -150,9 +150,6 @@ def add_exchange_sign_to_hvdc_df(network:nt.Network, country1:str, country2:str)
                      (hvdcs_border["country_end"] == country2), "exchange_sign"] = 1
     hvdcs_border.loc[(hvdcs_border["country_or"] == country2) & \
                      (hvdcs_border["country_end"] == country1), "exchange_sign"] = -1
-    # But positive flow is in the direction station rectifier -> station inverter
-    # if needed, we have to change the sign
-    hvdcs_border.loc[hvdcs_border["converters_mode"] == "SIDE_1_INVERTER_SIDE_2_RECTIFIER", "exchange_sign"] *= -1
 
     # print(hvdcs_border)
     return hvdcs_border
