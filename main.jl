@@ -120,7 +120,7 @@ function launch_optimization(file_name::String, results_file_name::String, contr
     set_objective(model, MIN_SENSE, counter_trading)
     optimize!(model)
     println("The minimum counter trading needed for safety is: ", value(counter_trading))
-    fix(counter_trading, value(counter_trading)*1.1)
+    fix(counter_trading, max(value(counter_trading)*1.1, value(counter_trading)))
     unfix(minimum_margin)
     set_objective(model, MAX_SENSE, minimum_margin)
     optimize!(model)

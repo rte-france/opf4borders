@@ -136,7 +136,7 @@ function create_model(quiet::Bool, network::NETWORK, set_of_hvdc::Set, set_of_ps
         - counter_trading[counter] <= counter_trading_abs[counter]
     end)
 
-    @constraint(model, sum(counter_trading_abs[counter] for counter in set_of_counter) <= total_counter_trading)
+    @constraint(model, sum(counter_trading[counter] for counter in set_of_counter) <= total_counter_trading)
 
     @variable(model, minimum_margin)
 
