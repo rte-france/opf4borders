@@ -417,13 +417,15 @@ def get_pst_data(network:nt.Network, active_psts_ids):
 def get_hvdc_data(hvdc_df:pd.DataFrame, active_hvdc_lines_ids:list, per_unit=True):
     """Get needed HVDC data for the optimization"""
 
-    hvdc_df = hvdc_df.loc[active_hvdc_lines_ids]
+    hvdc_df = hvdc_df.loc[active_hvdc_lines_ids].copy()
     # Mapped coupled HVDCs : Two parallel HVDCS will be considered as one lever in the optimization
     hvdc_map = {merged_hvdc:hvdc_df[hvdc_df["voltage_level_id_or"] == hvdc_origin].index.to_list() \
                 for merged_hvdc, hvdc_origin in hvdc_df["voltage_level_id_or"].items() if merged_hvdc.endswith("1")}
     # print(hvdc_map)
 
     pu_ratio = 100 if per_unit else 1
+    # target_p is always positive, so here the sign should change depending on which side is INVERTER
+    hvdc_df.loc[hvdc_df["converters_mode"] == "SIDE_1_INVERTER_SIDE_2_RECTIFIER", "exchange_sign"] *= -1
     hvdc_dict = {merged_hvdc_name: {
                             "referenceSetpoint":pu_ratio*sum(hvdc_df.loc[hvdc_name, "target_p"] * \
                                                         hvdc_df.loc[hvdc_name, "exchange_sign"]

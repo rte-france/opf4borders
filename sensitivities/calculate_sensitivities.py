@@ -232,7 +232,7 @@ def main(data_folder:str, network_path:str, monitored_branches_path:str, conting
                 apply_contingency_modification(network, case_name, contingency_element_type, hvdc_emulation_lines_ids, False)
                 lf_res_2 = lf.run_ac(network, PARAMS)
                 if lf_res_2[0].status != lf.ComponentStatus.CONVERGED:
-                    print("Still not working : skiping")
+                    print(f"Still not working, status is {lf_res_2[0]} : skiping")
                     timers[f"Sensi for {case_name}"] = time() - current_time
                     current_time = time()
                     continue
